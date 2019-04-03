@@ -1,12 +1,13 @@
 import numpy as np
 import operator
 import matplotlib.pyplot as plt
+from scipy import stats
 
 
 class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, generations=70, num_population=20, crossover_prob=0.5,
-                 mutation_prob=0.7, maximize_fitness=True):
+                 mutation_prob=0.7, maximize_fitness=True, statistical_validation=True):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -24,10 +25,11 @@ class GeneticAlgorithm(object):
         self.cross_prob = crossover_prob
         self.chromosome = chromosome
         self.parent_selector = parent_selector
-
+        self.statistical_validation = statistical_validation
         self.maximize = maximize_fitness
         self.history = np.empty((self.pop_size, self.num_generations + 1))
         self.history_fitness = {}
+        self.best_fit_history = {}
         self.parent_selector.set_genetic_algorithm(self)
         print("Generic algorith params:")
         print("Number of generations: %d" % self.num_generations)
@@ -106,24 +108,53 @@ class GenerationalGA(GeneticAlgorithm):
         idxs = list(fitness_result.keys())[:-len(next_generation)]
         return [population[i] for i in idxs] + next_generation
 
+    def validate_best(self, ranking, population, iters=5):
+        '''
+        If the evaluation process of each gen is not deterministic, it's necessary
+        to do a statical validation of the performance. To do this, this function
+        makes a validation of the best gen of the generation in the population, evaluating it
+        a 'iters' number of times, and add a list with the results to a dictionary.
+
+        :param ranking:     The ranking of the population in the actual generation as a dict with
+                            the name of each gen as a key, and a tuple (id, fitnees) as a value
+        :param population:  Al the genes in the actual generation
+        :param iters:       The number of times to compute the metric of the best gen of the generation
+        :return:
+        '''
+        best = population(ranking[0][0])
+        all_fits = [ranking[0][1]]
+        if best.__repr__() not in self.best_fit_history.keys():
+            for i in range(1, iters):
+                all_fits.append(best.fitness())
+            self.best_fit_history[best.__repr__()] = all_fits
+            self.history_fitness[best.__repr__()] = np.mean(all_fits)
+
     def evolve(self, show=True):
         population = self.initial_population()
         for generation in range(self.num_generations + 1):
             ranking = self.rank(population)
+            self.validate_best(ranking, population)
             self.actualize_history(generation, ranking)
             if self.num_generations <= 10 and show:
                 print("%d) best fit: %0.3f" % (generation + 1, ranking[0][1]))
             elif show and (generation % int(self.num_generations / 10) == 0):
                 print("%d) best fit: %0.3f" % (generation + 1, ranking[0][1]))
-            if generation == self.num_generations:
-                break
+
             next_generation, all_parents = self.parent_selector.next_gen(population, self.offspring_size)
             population = self.replace(population, next_generation, all_parents)
 
         ranking = self.rank(population)
+        self.validate_best(ranking, population)
         win_idx = ranking[0][0]
         best_fit = ranking[0][1]
         winner = population[win_idx]
+        if self.statistical_validation:
+            print("Making statistical validation")
+            winner_data = self.best_fit_history[winner.__repr__()]
+            benchmark_data = np.array([self.chromosome.fitness()])
+            t_value, p_value = stats.ttest_ind(winner_data, benchmark_data)
+            print("t = " + str(t_value))
+            print("p = " + str(p_value))
         if show:
             print("Best Gen -> ", winner)
             print("With Fitness: %0.3f" % best_fit)

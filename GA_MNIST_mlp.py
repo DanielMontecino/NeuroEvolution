@@ -146,6 +146,7 @@ class Cromosome(object):
         return rep
 
     def fitness(self):
+        return self.evaluator.calc(self)
         if self.fit is None:
             self.fit = self.evaluator.calc(self)
         return self.fit
@@ -246,22 +247,19 @@ class Fitness:
 l = Layer(516, 'relu', 0.2)
 l2 = Layer(516, 'relu', 0.2)
 c = Cromosome([l, l2])
-clases = [4, 9]
-dm = DataManager(clases=clases)
+classes = [4, 9]
+dm = DataManager(clases=classes)
 data = dm.load_data()
 fitness = Fitness.get_instance()
 fitness.set_params(data, verbose=0, reduce_plateau=False)
-
-fitness.calc_mean(c)
-fitness.calc_mean(Cromosome([]))
-
 
 ps = [RandomParentSelector(), LinealOrder(), WheelSelection(), TournamentSelection(5)]
 p = ps[2]
 
 ti_all = time()
-generational = GenerationalGA(num_parents=0.5, chromosome=c, parent_selector=p, generations=40, num_population=15, crossover_prob=0.5,
-                 mutation_prob=0.7, maximize_fitness=True)
+generational = GenerationalGA(num_parents=0.5, chromosome=c, parent_selector=p, generations=10,
+                              num_population=15, crossover_prob=0.5, mutation_prob=0.7,
+                              maximize_fitness=True)
 winner, best_fit, ranking = generational.evolve()
 print("Total elapsed time: %0.3f" % (time() - ti_all))
 fitness.calc_mean(winner)
