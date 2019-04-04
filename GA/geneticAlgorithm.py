@@ -121,7 +121,7 @@ class GenerationalGA(GeneticAlgorithm):
         :param iters:       The number of times to compute the metric of the best gen of the generation
         :return:
         '''
-        best = population(ranking[0][0])
+        best = population[ranking[0][0]]
         all_fits = [ranking[0][1]]
         if best.__repr__() not in self.best_fit_history.keys():
             for i in range(1, iters):
