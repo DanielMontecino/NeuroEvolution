@@ -2,6 +2,7 @@ import numpy as np
 import operator
 import matplotlib.pyplot as plt
 from scipy import stats
+from time import time
 
 
 class GeneticAlgorithm(object):
@@ -131,14 +132,17 @@ class GenerationalGA(GeneticAlgorithm):
 
     def evolve(self, show=True):
         population = self.initial_population()
+        ti = time()
         for generation in range(self.num_generations + 1):
             ranking = self.rank(population)
             self.validate_best(ranking, population)
             self.actualize_history(generation, ranking)
             if self.num_generations <= 10 and show:
-                print("%d) best fit: %0.3f" % (generation + 1, ranking[0][1]))
+                print("%d) best fit: %0.3f in batch time: %0.2f" % (generation + 1, ranking[0][1], time() - ti))
+                ti = time()
             elif show and (generation % int(self.num_generations / 10) == 0):
-                print("%d) best fit: %0.3f" % (generation + 1, ranking[0][1]))
+                print("%d) best fit: %0.3f in batch time: %0.2f" % (generation + 1, ranking[0][1], time() - ti))
+                ti = time()
 
             next_generation, all_parents = self.parent_selector.next_gen(population, self.offspring_size)
             population = self.replace(population, next_generation, all_parents)
@@ -152,6 +156,7 @@ class GenerationalGA(GeneticAlgorithm):
             print("Making statistical validation")
             winner_data = self.best_fit_history[winner.__repr__()]
             benchmark_data = np.array([self.chromosome.fitness()])
+            print("Benchmark score: %0.4f. Winner score: %0.4f" % (np.mean(winner_data), np.mean(benchmark_data)))
             t_value, p_value = stats.ttest_ind(winner_data, benchmark_data)
             print("t = " + str(t_value))
             print("p = " + str(p_value))
