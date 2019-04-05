@@ -8,7 +8,7 @@ from time import time
 class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, generations=70, num_population=20, crossover_prob=0.5,
-                 mutation_prob=0.7, maximize_fitness=True, statistical_validation=True):
+                 mutation_prob=0.7, maximize_fitness=True, statistical_validation=True, save_pop=False):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -30,7 +30,9 @@ class GeneticAlgorithm(object):
         self.maximize = maximize_fitness
         self.history = np.empty((self.pop_size, self.num_generations + 1))
         self.history_fitness = {}
+        self.population_history = []
         self.best_fit_history = {}
+        self.save_pop = save_pop
         self.parent_selector.set_genetic_algorithm(self)
         print("Genetic algorithm params:")
         print("Number of generations: %d" % self.num_generations)
@@ -135,6 +137,8 @@ class GenerationalGA(GeneticAlgorithm):
         ti = time()
         for generation in range(self.num_generations + 1):
             ranking = self.rank(population)
+            if self.save_pop:
+                self.population_history.append(population)
             self.validate_best(ranking, population)
             self.actualize_history(generation, ranking)
             if self.num_generations <= 10 and show:
