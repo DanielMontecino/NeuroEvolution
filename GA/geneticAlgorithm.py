@@ -32,7 +32,7 @@ class GeneticAlgorithm(object):
         self.history_fitness = {}
         self.best_fit_history = {}
         self.parent_selector.set_genetic_algorithm(self)
-        print("Generic algorith params:")
+        print("Genetic algorithm params:")
         print("Number of generations: %d" % self.num_generations)
         print("Population size: %d" % self.pop_size)
 
@@ -155,8 +155,11 @@ class GenerationalGA(GeneticAlgorithm):
         if self.statistical_validation:
             print("Making statistical validation")
             winner_data = self.best_fit_history[winner.__repr__()]
-            benchmark_data = np.array([self.chromosome.fitness()])
-            print("Benchmark score: %0.4f. Winner score: %0.4f" % (np.mean(winner_data), np.mean(benchmark_data)))
+            benchmark_data = np.array([self.chromosome.fitness() for i in range(len(winner_data)) ])
+            print("Logging data:")
+            print(winner_data)
+            print(benchmark_data)
+            print("Benchmark score: %0.4f. Winner score: %0.4f" % (np.mean(benchmark_data), np.mean(winner_data)))
             t_value, p_value = stats.ttest_ind(winner_data, benchmark_data)
             print("t = " + str(t_value))
             print("p = " + str(p_value))
