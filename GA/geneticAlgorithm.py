@@ -3,12 +3,15 @@ import operator
 import matplotlib.pyplot as plt
 from scipy import stats
 from time import time
+import datetime
+from datetime import timedelta
+
 
 
 class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, generations=70, num_population=20, crossover_prob=0.5,
-                 mutation_prob=0.7, maximize_fitness=True, statistical_validation=True, save_pop=False):
+                 mutation_prob=0.7, maximize_fitness=True, statistical_validation=True, save_pop=False, training_hours=1e3):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -34,6 +37,7 @@ class GeneticAlgorithm(object):
         self.best_fit_history = {}
         self.save_pop = save_pop
         self.parent_selector.set_genetic_algorithm(self)
+        self.training_hours = training_hours
         print("Genetic algorithm params:")
         print("Number of generations: %d" % self.num_generations)
         print("Population size: %d" % self.pop_size)
@@ -100,6 +104,7 @@ class GenerationalGA(GeneticAlgorithm):
     def replace(self, population, next_generation, all_parents):
         fitness_result = {}
         for i in range(len(population)):
+      
             gen = population[i].__repr__()
             if gen not in self.history_fitness.keys():
                 self.history_fitness[gen] = population[i].fitness()
@@ -135,7 +140,9 @@ class GenerationalGA(GeneticAlgorithm):
     def evolve(self, show=True):
         population = self.initial_population()
         ti = time()
-        for generation in range(self.num_generations + 1):
+        start_time = datetime.datetime.now()
+        limit_time = start_time + timedelta(hours=self.training_hours)
+        for generation in range(self.num_generations + 1):                
             ranking = self.rank(population)
             if self.save_pop:
                 self.population_history.append(population)
@@ -150,6 +157,8 @@ class GenerationalGA(GeneticAlgorithm):
 
             next_generation, all_parents = self.parent_selector.next_gen(population, self.offspring_size)
             population = self.replace(population, next_generation, all_parents)
+            if ( start_time > limit_time ):
+                break
 
         ranking = self.rank(population)
         self.validate_best(ranking, population)

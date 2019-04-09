@@ -52,6 +52,7 @@ class DataManager(object):
         self.y_train = y_train
         self.y_test = y_test
         self.y_val = y_val
+
         print(x_train.shape, 'train samples')
         print(x_val.shape, 'validation samples')
         print(x_test.shape, 'test samples')
