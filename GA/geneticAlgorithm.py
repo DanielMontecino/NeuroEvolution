@@ -132,8 +132,9 @@ class GenerationalGA(GeneticAlgorithm):
         best = population[ranking[0][0]]
         all_fits = [ranking[0][1]]
         if best.__repr__() not in self.best_fit_history.keys():
-            for i in range(1, iters):
-                all_fits.append(best.fitness())
+            all_fits += best.cross_val()
+            #for i in range(1, iters):
+            #    all_fits.append(best.fitness())
             self.best_fit_history[best.__repr__()] = all_fits
             self.history_fitness[best.__repr__()] = np.mean(all_fits)
 
@@ -146,7 +147,8 @@ class GenerationalGA(GeneticAlgorithm):
             ranking = self.rank(population)
             if self.save_pop:
                 self.population_history.append(population)
-            self.validate_best(ranking, population)
+            if self.statistical_validation:
+                self.validate_best(ranking, population)
             self.actualize_history(generation, ranking)
             if self.num_generations <= 10 and show:
                 print("%d) best fit: %0.3f in batch time: %0.2f" % (generation + 1, ranking[0][1], time() - ti))
@@ -161,24 +163,26 @@ class GenerationalGA(GeneticAlgorithm):
                 break
 
         ranking = self.rank(population)
-        self.validate_best(ranking, population)
+        if self.statistical_validation:
+            self.validate_best(ranking, population)
         win_idx = ranking[0][0]
         best_fit = ranking[0][1]
         winner = population[win_idx]
         if self.statistical_validation:
             print("Making statistical validation")
-            winner_data = self.best_fit_history[winner.__repr__()]
-            benchmark_data = np.array([self.chromosome.fitness() for i in range(len(winner_data)) ])
+            winner_data_val = self.best_fit_history[winner.__repr__()]
+            winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
+            benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
             print("Logging data:")
             print(winner_data)
             print(benchmark_data)
-            print("Benchmark score: %0.4f. Winner score: %0.4f" % (np.mean(benchmark_data), np.mean(winner_data)))
+            print("Benchmark test score: %0.4f. Winner test score: %0.4f" % (np.mean(benchmark_data), np.mean(winner_data)))
             t_value, p_value = stats.ttest_ind(winner_data, benchmark_data)
             print("t = " + str(t_value))
             print("p = " + str(p_value))
         if show:
             print("Best Gen -> ", winner)
-            print("With Fitness: %0.3f" % best_fit)
+            print("With Fitness (val): %0.3f" % best_fit)
             self.show_history()
         return winner, best_fit, ranking
 
