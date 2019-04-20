@@ -170,17 +170,18 @@ class GenerationalGA(GeneticAlgorithm):
         winner = population[win_idx]
         if self.statistical_validation:
             print("Making statistical validation")
-            winner_data = self.best_fit_history[winner.__repr__()]
-            benchmark_data = [self.chromosome.fitness() for w in winner_data]
+            winner_data_val = self.best_fit_history[winner.__repr__()]
+            benchmark_data_val = [self.chromosome.fitness() for w in winner_data_val]
             #winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
             #benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
-            print("Logging data:")
-            print(winner_data)
-            print(benchmark_data)
-            print("Benchmark test score: %0.4f. Winner test score: %0.4f" % (np.mean(benchmark_data), np.mean(winner_data)))
-            t_value, p_value = stats.ttest_ind(winner_data, benchmark_data)
-            print("t = " + str(t_value))
-            print("p = " + str(p_value))
+            print("Benchmark Val score: %0.4f. Winner Val score: %0.4f" % (np.mean(benchmark_data_val), np.mean(winner_data_val)))
+            t_value, p_value = stats.ttest_ind(winner_data_val, benchmark_data_val)
+            print("t = %0.4f, p = %0.4f" %(t_value, p_value))
+            winner_data_test = [winner.fitness(test=True) for w in winner_data_val]
+            benchmark_data_test = [self.chromosome.fitness(test=True) for w in winner_data_val]
+            print("Benchmark Test score: %0.4f. Winner Test score: %0.4f" % (np.mean(benchmark_data_test), np.mean(winner_data_test)))
+            t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)
+            print("t = %0.4f, p = %0.4f" %(t_value, p_value))
         if show:
             print("Best Gen -> ", winner)
             print("With Fitness (val): %0.3f" % best_fit)
