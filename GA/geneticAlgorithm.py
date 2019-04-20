@@ -132,9 +132,9 @@ class GenerationalGA(GeneticAlgorithm):
         best = population[ranking[0][0]]
         all_fits = [ranking[0][1]]
         if best.__repr__() not in self.best_fit_history.keys():
-            all_fits += best.cross_val()
-            #for i in range(1, iters):
-            #    all_fits.append(best.fitness())
+            #all_fits += best.cross_val()
+            for i in range(1, iters):
+                all_fits.append(best.fitness())
             self.best_fit_history[best.__repr__()] = all_fits
             self.history_fitness[best.__repr__()] = np.mean(all_fits)
 
@@ -170,9 +170,10 @@ class GenerationalGA(GeneticAlgorithm):
         winner = population[win_idx]
         if self.statistical_validation:
             print("Making statistical validation")
-            winner_data_val = self.best_fit_history[winner.__repr__()]
-            winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
-            benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
+            winner_data = self.best_fit_history[winner.__repr__()]
+            benchmark_data = [self.chromosome.fitness() for w in winner_data]
+            #winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
+            #benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
             print("Logging data:")
             print(winner_data)
             print(benchmark_data)
