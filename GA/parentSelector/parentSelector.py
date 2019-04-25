@@ -27,7 +27,7 @@ class ParentSelector(object):
         next_generation = []
         all_parents = []
         for n in range(num_offspring):
-            offspring, parents = self.get_one_offspring(population)
+            offspring, parents = self.get_one_offspring(population, show_probs=n == -1)
             next_generation.append(offspring)
             all_parents.append(parents)
         return next_generation, all_parents
@@ -43,12 +43,12 @@ class ParentSelector(object):
             fitness_result[i] = self.history_fitness[gen]
         return sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize)
 
-    def get_one_offspring(self, population):
+    def get_one_offspring(self, population, show_probs=False):
         raise NotImplementedError("Not implemented yet!")
 
 
 class RandomParentSelector(ParentSelector):
-    def get_one_offspring(self, population):
+    def get_one_offspring(self, population, show_probs=False):
         parent1, parent2 = random.choices(population, k=2)
         counter = 10
         while parent1.equals(parent2) and counter < 10:
@@ -63,7 +63,7 @@ class RandomParentSelector(ParentSelector):
 
 
 class LinealOrder(ParentSelector):
-    def get_one_offspring(self, population):
+    def get_one_offspring(self, population, show_probs=False):
         ranking = dict(self.rank(population))
         ids = list(ranking.keys())
         probes = np.linspace(len(population), 1, len(population))
@@ -88,7 +88,7 @@ class LinealOrderII(ParentSelector):
         super().set_genetic_algorithm(genetic_algorithm)
         self.num_parents = self.ga.num_parents
 
-    def get_one_offspring(self, population):
+    def get_one_offspring(self, population, show_probs=False):
         ranking = dict(self.rank(population))
         idxs = list(ranking.keys())
         positions = np.linspace(1, len(population), len(population))
@@ -109,7 +109,7 @@ class LinealOrderII(ParentSelector):
 
 
 class WheelSelection(ParentSelector):
-    def get_one_offspring(self, population):
+    def get_one_offspring(self, population, show_probs=False):
         ranking = dict(self.rank(population))
         idxs = list(ranking.keys())
         fitness = list(ranking.values())
@@ -127,6 +127,13 @@ class WheelSelection(ParentSelector):
                 print("PROBLEMS HERE!")
                 print(len(idxs))
                 print(probs)
+        if show_probs:
+            for i in range(len(population)):
+                print("Fit: %0.4f. Prob: %0.4f" % (fitness[i], probs[i]))
+                print(population[idxs[i]])
+                #print("[" ,end='')
+                #[print("%0.3f" % f, end=', ') for f in probs]
+                #print("] -> %0.3f, %0.3f" % (probs[idx_1], probs[idx_2]))
         parent1 = population[idx_1]
         parent2 = population[idx_2]
         offspring = parent1.cross(parent2)
@@ -140,7 +147,7 @@ class TournamentSelection(ParentSelector):
         super().__init__(**kwards)
         self.N = N_participants
 
-    def get_one_offspring(self, population):
+    def get_one_offspring(self, population, show_probs=False):
         idxs = np.linspace(0, len(population) - 1, len(population)).astype(np.int32)
         idxs_perm = np.random.permutation(idxs)
         participants_1 = [population[idxs_perm[i]] for i in range(self.N)]
