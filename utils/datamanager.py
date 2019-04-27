@@ -38,9 +38,14 @@ class DataManager(object):
 
         del data, test_data, train_data
 
-        x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
-        x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
-
+        if self.name in ['mnist', 'fashion_mnist']:
+            x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
+            x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
+        else:
+            x_train = x_train.reshape(-1, 32, 32, 3).astype('float32') / 255.
+            x_test  =  x_test.reshape(-1, 32, 32, 3).astype('float32') / 255.
+        y_train = [int(label) for label in y_train]
+        y_test  = [int(label) for label in y_test]
         y_train, y_test = self.encode(y_train, y_test)
         y_train = to_categorical(y_train, self.num_clases)
         y_test = to_categorical(y_test, self.num_clases)
@@ -69,7 +74,7 @@ class DataManager(object):
         y_train = [self.encoder[l] for l in y_train]
         y_test = [self.encoder[l] for l in y_test]
         return y_train, y_test
-
+    
     def limit_examples(self, data):
         examples = len(data[1])
         if self.max_examples is None or examples < self.max_examples:

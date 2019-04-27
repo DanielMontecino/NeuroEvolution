@@ -174,7 +174,8 @@ class Fitness:
         else:
             Fitness.__instance = self
 
-    def set_params(self, data, batch_size=128, epochs=100, early_stop=True, reduce_plateau=True, verbose=1):
+    def set_params(self, data, batch_size=128, epochs=100, early_stop=True, reduce_plateau=True, 
+                   verbose=1, input_shape=(28,28,1)):
         self.time = 0
         self.batch_size = batch_size
         self.epochs = epochs
@@ -184,6 +185,7 @@ class Fitness:
         (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = data
         self.num_clases = self.y_train.shape[1]
         self.callbacks = []
+        self.input_shape = input_shape
         #self.callbacks = [EarlyStopping(monitor='val_acc', patience=3,baseline=(1. /self.num_clases)*1.2)]                                         
         if self.early_stop and keras.__version__=='2.2.4':
             self.callbacks.append(EarlyStopping(monitor='val_acc', patience=10, restore_best_weights=True))
@@ -243,7 +245,7 @@ class Fitness:
 
     def decode(self, chromosome):
 
-        inp = Input(shape=(28, 28, 1))
+        inp = Input(shape=self.input_shape)
         x = Flatten()(inp)
         for i in range(chromosome.n_layers):
             act = chromosome.layers[i].activation
@@ -301,7 +303,7 @@ class Fitness:
             x = Dense(self.num_clases, activation='softmax', name=name)(x)
             return x
 
-        inputs = Input(shape=(28, 28, 1))
+        inputs = Input(shape=self.input_shape)
         model = Model(inputs=inputs, outputs=[decode_C(c1, inputs,'x1'), decode_C(c2, inputs,'x2')],
                         name="all_net")
         losses = {'x1':"categorical_crossentropy", 'x2':"categorical_crossentropy"}
