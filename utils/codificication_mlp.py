@@ -188,9 +188,9 @@ class Fitness:
         self.input_shape = input_shape
         #self.callbacks = [EarlyStopping(monitor='val_acc', patience=3,baseline=(1. /self.num_clases)*1.2)]                                         
         if self.early_stop and keras.__version__=='2.2.4':
-            self.callbacks.append(EarlyStopping(monitor='val_acc', patience=10, restore_best_weights=True))
+            self.callbacks.append(EarlyStopping(monitor='val_acc', patience=50, restore_best_weights=True))
         elif self.early_stop:
-            self.callbacks.append(EarlyStopping(monitor='val_acc', patience=10))
+            self.callbacks.append(EarlyStopping(monitor='val_acc', patience=50))
         if self.reduce_plateu:
             self.callbacks.append(ReduceLROnPlateau(monitor='val_acc', factor=0.2,
                                                     patience=5, verbose=self.verb))

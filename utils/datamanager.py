@@ -3,6 +3,7 @@ from __future__ import print_function
 from keras.datasets import fashion_mnist, mnist, cifar10, cifar100
 from keras.utils import to_categorical
 import numpy as np
+import os
 
 
 class DataManager(object):
@@ -11,8 +12,9 @@ class DataManager(object):
      limited number of training examples or a smaller number of classes.
     '''
 
-    def __init__(self, name='mnist', max_examples=None, clases=[], num_clases=10, train_split=0.8):
-        assert name in ['mnist', 'fashion_mnist', 'cifar10', 'cifar100']
+    def __init__(self, name='mnist', max_examples=None, clases=[], num_clases=10, train_split=0.8,
+                 folder_var_mnist=None):
+        assert name in ['mnist', 'fashion_mnist', 'cifar10', 'cifar100', 'MB','MBI','MRB','MRD','MRDBI']
         self.name = name
         if len(clases) > 0:
             self.num_clases = len(clases)
@@ -21,6 +23,7 @@ class DataManager(object):
         self.max_examples = max_examples
         self.clases = clases
         self.train_split = train_split
+        self.folder_variations_mnist = folder_var_mnist
 
     def load_data(self):
         if self.name == 'mnist':
@@ -29,6 +32,10 @@ class DataManager(object):
             data = fashion_mnist.load_data()
         elif self.name == 'cifar10':
             data = cifar10.load_data()
+        elif self.name in ['MB', 'MBI', 'MRB', 'MRD', 'MRDBI']:
+            if self.folder_variations_mnist is None:
+                raise ValueError("There isn't folder with this datasets")
+            data = get_mnist_variations(self.folder_variations_mnist, self.name)
         else:
             data = cifar100.load_data()
 
@@ -38,12 +45,12 @@ class DataManager(object):
 
         del data, test_data, train_data
 
-        if self.name in ['mnist', 'fashion_mnist']:
-            x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
-            x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
-        else:
+        if self.name in ['cifar10', 'cifar100']:
             x_train = x_train.reshape(-1, 32, 32, 3).astype('float32') / 255.
             x_test  =  x_test.reshape(-1, 32, 32, 3).astype('float32') / 255.
+        else:
+            x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
+            x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
         y_train = [int(label) for label in y_train]
         y_test  = [int(label) for label in y_test]
         y_train, y_test = self.encode(y_train, y_test)
@@ -117,3 +124,41 @@ class DataManager(object):
     def split(self, data, labels, train_split):
         s = int(train_split * data.shape[0])
         return (data[:s], labels[:s]), (data[s:], labels[s:])
+
+
+def get_mnist_variations(folder, data):
+    file_list = [f for f in os.listdir(folder) if f[-3:] != 'zip']
+    files = {'MB': 'mnist',
+             'MBI': 'mnist_background_images',
+             'MRB': 'mnist_background_random',
+             'MRD': 'mnist_rotation_new',
+             'MRDBI': 'mnist_rotation_back_image_new'}
+    T_mode = {'MB': False,
+              'MBI': True,
+              'MRB': True,
+              'MRD': True,
+              'MRDBI': True}
+    assert data in files.keys()
+    dataset = files[data]
+    folder_datasets = os.path.join(folder, dataset)
+    datasets = os.listdir(folder_datasets)
+    file_train = os.path.join(folder_datasets, [d for d in datasets if 'train' in d][0])
+    file_test = os.path.join(folder_datasets, [d for d in datasets if 'test' in d][0])
+
+    def get_XY(file):
+        with open(file, 'r') as f:
+            X, Y = [], []
+            for c, line in enumerate(f):
+                array = line.split(' ')
+                array = [float(l) for l in array if len(l) > 0]
+                array = np.array(array)
+                Y.append(int(array[-1]))
+                if T_mode[data]:
+                    X.append(array[:-1].reshape(28, 28).T)
+                else:
+                    X.append(array[:-1].reshape(28, 28))
+        return np.array(X), np.array(Y, dtype=np.int32)
+
+    x_train, y_train = get_XY(file_train)
+    x_test, y_test = get_XY(file_test)
+    return (x_train, y_train), (x_test, y_test)
