@@ -13,7 +13,7 @@ class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
-                 folder=None):
+                 folder=None, save_progress=True):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -37,25 +37,27 @@ class GeneticAlgorithm(object):
         self.training_hours = training_hours
         self.filename = self.get_file_to_save(folder)
         self.generation = 0
+        self.population = []
+        self.save_progress = save_progress
         print("Genetic algorithm params")
         print("Number of generations: %d" % self.num_generations)
         print("Population size: %d" % self.pop_size)
-        print("Folder to save: %s" % self.filename)
+        if self.save_progress:
+            print("Folder to save: %s" % self.filename)
 
     @staticmethod
     def load_genetic_algorithm(filename=None, folder=None):
-        assert (filename, folder)!=(None, None)
+        assert (filename, folder) != (None, None)
         if filename is None:
             files = os.listdir(folder)
             # Files in format: id_Y-M-D-h-m
             id_files = np.array([f.split("_")[0] for f in files], dtype=np.int32)
-            filename = files[np.argmax(id_files)]
+            filename = files[int(np.argmax(id_files))]
             filename = os.path.join(folder, filename, 'GA_experiment')
             print("Loading file %s" % filename)
         """ Static access method. """
         infile = open(filename, 'rb')
         generational = pickle.load(infile)
-        #generational.chromosome.reset_params()
         infile.close()
         return generational
 
@@ -76,7 +78,9 @@ class GeneticAlgorithm(object):
         filename = os.path.join(new_folder, 'GA_experiment')
         return filename
 
-    def save_genetic_algorithm(self, verbose=0):
+    def maybe_save_genetic_algorithm(self, verbose=0, force=False):
+        if not self.save_progress or not force:
+            return
         if self.filename is None:
             print("Error!, folder is not defined")
             return
@@ -89,16 +93,16 @@ class GeneticAlgorithm(object):
         if verbose:
             print("Elapsed saved time: %0.3f" % (time() - ti))
 
-    def create_random_indiv(self):
-        return self.chromosome.random_indiv()
+    def create_random_individual(self):
+        return self.chromosome.random_individual()
 
-    def create_simple_indiv(self):
-        return self.chromosome.simple_indiv()
+    def create_simple_individual(self):
+        return self.chromosome.simple_individual()
 
     def initial_population(self):
         population = []
         for i in range(self.pop_size):
-            population.append(self.create_random_indiv())
+            population.append(self.create_random_individual())
         return population
 
     @staticmethod
@@ -117,22 +121,36 @@ class GeneticAlgorithm(object):
             gen = population[i].__repr__()
             if gen not in self.history_fitness.keys():
                 self.history_fitness[gen] = population[i].fitness()
-            elif population[i].fit is None:
-                population[i].fit = self.history_fitness[gen]
             fitness_result[i] = self.history_fitness[gen]
         return sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize)
 
     def show_history(self):
-        x = np.linspace(0, self.num_generations, self.num_generations + 1)
-        mean = np.mean(self.history, axis=0)
-        max_ = np.max(self.history, axis=0)
-        min_ = np.min(self.history, axis=0)
-        plt.plot(x, mean, label="mean", color='r', lw=1)
-        plt.plot(x, max_, label='max', color='b', lw=1)
-        plt.plot(x, min_, label='min', color='g', lw=1)
+        self.show_history_()
+        self.show_history_(zoom=True)
+        
+    def show_history_(self, zoom=False):
+        colors = np.array([[31, 119, 180], [255, 127, 14]]) / 255.
+        h = self.history
+        epochs = np.linspace(1, h.shape[1], h.shape[1])
+        bests = [np.min(h, axis=0), np.max(h, axis=0)][self.maximize]
+        plt.figure(figsize=(10, 5))
+        s = 6
+        for a in h:
+            plt.scatter(epochs, a, s=s, color='k', alpha=0.5, marker='.')
+        plt.scatter(epochs, bests, color=colors[0], s=s * 5, marker='*')
+        plt.plot(epochs, np.mean(h, axis=0), color=colors[1], lw=1, label='mean', linestyle='--')
+        plt.plot(epochs, bests, color=colors[0], lw=1, label='best', linestyle='--')
+        if zoom:
+            last_gen = h[:, -1]
+            lim_inf_y = [np.min(last_gen), np.mean(last_gen)][self.maximize]
+            lim_sup_y = [np.mean(last_gen), np.max(last_gen)][self.maximize]
+            lim_inf_y = lim_inf_y - (lim_sup_y - lim_inf_y) * 0.1
+            lim_sup_y = lim_sup_y + (lim_sup_y - lim_inf_y) * 0.1
+            plt.ylim(lim_inf_y, lim_sup_y)
+        plt.grid()
         plt.legend()
-        plt.xlabel("num generation")
         plt.ylabel('Fitness')
+        plt.xlabel('Generations')
         plt.show()
 
 
@@ -155,15 +173,13 @@ class GenerationalGA(GeneticAlgorithm):
             gen = population[i].__repr__()
             if gen not in self.history_fitness.keys():
                 self.history_fitness[gen] = population[i].fitness()
-            elif population[i].fit is None:
-                population[i].fit = self.history_fitness[gen]
 
             fitness_result[i] = self.history_fitness[gen]
         fitness_result = dict(sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize))
         idxs = list(fitness_result.keys())[:-len(next_generation)]
         return [population[i] for i in idxs] + next_generation
 
-    def validate_best(self, ranking, population, iters=5):
+    def maybe_validate_best(self, ranking, population, iters=5):
         '''
         If the evaluation process of each gen is not deterministic, it's necessary
         to do a statical validation of the performance. To do this, this function
@@ -176,11 +192,12 @@ class GenerationalGA(GeneticAlgorithm):
         :param iters:       The number of times to compute the metric of the best gen of the generation
         :return:
         '''
+        if not self.statistical_validation:
+            return ranking
         best = population[ranking[0][0]]
         all_fits = [ranking[0][1]]
         val_rank = dict(ranking)
         if best.__repr__() not in self.best_fit_history.keys():
-            #all_fits += best.cross_val()
             for i in range(1, iters):
                 all_fits.append(best.fitness())
             self.best_fit_history[best.__repr__()] = all_fits
@@ -189,56 +206,60 @@ class GenerationalGA(GeneticAlgorithm):
         return sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
 
     def evolve(self, show=True):
-        if self.generation == 0:
+        if self.generation == 0 or self.population == []:
             self.population = self.initial_population()
-            print("Initial population")
-            for i, p in enumerate(self.population):
-                print("Individual %d" % (i+1))
-                print(p)
+            print("Creating Initial population")
         self.start_time = datetime.datetime.now()
         self.limit_time = self.start_time + timedelta(hours=self.training_hours)
         print("\nStart evolution process...\n")
         ti = time()
+
         for self.generation in range(self.generation, self.num_generations + 1):
             ranking = self.rank(self.population)
             self.population_history.append(self.population)
-            if self.statistical_validation:
-                ranking = self.validate_best(ranking, self.population)
+
+            # Make statical validation if is necessary
+            ranking = self.maybe_validate_best(ranking, self.population)
             self.actualize_history(self.generation, ranking)
+
+            # To show the progress of the evolution
             if (self.num_generations <= 10 or (self.generation % int(self.num_generations / 10) == 0)) and show:
                 print("%d) best fit: %0.3f in batch time: %0.2f mins" %
                       (self.generation + 1, ranking[0][1], (time() - ti)/60.))
-                self.save_genetic_algorithm(verbose=True)
+                print("Current winner:")
+                print(self.population[ranking[0][0]])
+                      
+            # Save the generation
+            self.maybe_save_genetic_algorithm(verbose=True)
 
             next_generation, all_parents = self.parent_selector.next_gen(self.population, self.offspring_size)
             self.population = self.replace(self.population, next_generation, all_parents)
 
-            if self.start_time > self.limit_time:
-                self.save_genetic_algorithm(verbose=True)
-                win_idx = ranking[0][0]
-                best_fit = ranking[0][1]
+            if datetime.datetime.now() > self.limit_time:
+                self.maybe_save_genetic_algorithm(verbose=True)
+                win_idx, best_fit = ranking[0]
                 winner = self.population[win_idx]
                 print("Best fit 'til now : %0.4f" % best_fit)
                 print(winner)
                 return winner, best_fit, ranking
                 
         ranking = self.rank(self.population)
-        if self.statistical_validation:
-            ranking = self.validate_best(ranking, self.population)
-            self.actualize_history(self.generation, ranking)
-        win_idx = ranking[0][0]
-        best_fit = ranking[0][1]
-        winner = self.population[win_idx]
+        ranking = self.maybe_validate_best(ranking, self.population)
+        self.actualize_history(self.generation, ranking)
 
-        if self.statistical_validation:
-            self.make_statistical_validation(winner)
+        win_idx, best_fit = ranking[0]
+        winner = self.population[win_idx]
+        fit_test = self.maybe_make_statistical_validation(winner)
+
         if show:
             print("Best Gen -> \n%s" % winner)
-            print("With Fitness (val): %0.3f" % best_fit)
+            print("With Fitness (val): %0.4f and (test): %0.4f" % (best_fit, fit_test))
             self.show_history()
         return winner, best_fit, ranking
 
-    def make_statistical_validation(self, winner):
+    def maybe_make_statistical_validation(self, winner):
+        if not self.statistical_validation:
+            return winner.fitness(test=True)
         print("Making statistical validation")
         winner_data_val = self.best_fit_history[winner.__repr__()]
         benchmark_data_val = [self.chromosome.fitness() for _ in winner_data_val]
@@ -254,4 +275,5 @@ class GenerationalGA(GeneticAlgorithm):
         np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
+        return np.mean(winner_data_test)
 

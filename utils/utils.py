@@ -110,3 +110,24 @@ class WarmUpCosineDecayScheduler(keras.callbacks.Callback):
         if self.verbose > 0:
             print('\nBatch %05d: setting learning '
                   'rate to %s.' % (self.global_step + 1, lr))
+            
+
+def smooth_labels(y, smooth_factor):
+    '''Convert a matrix of one-hot row-vector labels into smoothed versions.
+
+    # Arguments
+        y: matrix of one-hot row-vector labels to be smoothed
+        smooth_factor: label smoothing factor (between 0 and 1)
+
+    # Returns
+        A matrix of smoothed labels.
+    '''
+    assert len(y.shape) == 2
+    if 0 <= smooth_factor <= 1:
+        # label smoothing ref: https://www.robots.ox.ac.uk/~vgg/rg/papers/reinception.pdf
+        y *= 1 - smooth_factor
+        y += smooth_factor / y.shape[1]
+    else:
+        raise Exception(
+            'Invalid label smoothing factor: ' + str(smooth_factor))
+    return y

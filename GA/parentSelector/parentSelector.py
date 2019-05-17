@@ -19,9 +19,7 @@ class ParentSelector(object):
         gen = chromosome.__repr__()
         if gen not in self.history_fitness.keys():
             self.history_fitness[gen] = chromosome.fitness()
-        elif chromosome.fit is None:
-            chromosome.fit = self.history_fitness[gen]
-        return chromosome.fit
+        return self.history_fitness[gen]
 
     def next_gen(self, population, num_offspring=1):
         next_generation = []
