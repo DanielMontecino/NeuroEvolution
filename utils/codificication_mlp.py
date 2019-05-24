@@ -90,13 +90,13 @@ class Cromosome(object):
     def set_fitness(self, fit):
         self.evaluator = fit
 
-    def random_indiv(self):
+    def random_individual(self):
         n_layers = np.random.randint(0, self.max_layers)
         layers = [Layer().random_layer() for i in range(n_layers)]
         return Cromosome(layers)
 
     @staticmethod
-    def simple_indiv():
+    def simple_individual():
         return Cromosome([Layer()])
 
     def cross(self, other_cromosome):

@@ -1,20 +1,24 @@
 from __future__ import print_function
-from keras.layers import Conv2D, MaxPooling2D
-from tensorflow.python.framework.errors_impl import ResourceExhaustedError
+
+import random
+from time import time
+from time import sleep
 
 import keras
-from keras.models import Model, load_model
-from keras.layers import Dense, Dropout, Input, Flatten, PReLU, LeakyReLU, BatchNormalization
-from keras.optimizers import Adam
-from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-
-import time as T
-import random
 import numpy as np
-import matplotlib.pyplot as plt
+from keras import Input, Model
+from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+from keras.models import load_model
+from keras.layers import Conv2D, PReLU, LeakyReLU, BatchNormalization, Dropout, MaxPooling2D, Flatten, Dense
+from keras.optimizers import Adam
+from matplotlib import pyplot as plt
+from tensorflow.python.framework.errors_impl import ResourceExhaustedError
 
 from utils.codifications import Layer, Chromosome, Fitness
-from utils.utils import WarmUpCosineDecayScheduler, smooth_labels
+from utils.utils import smooth_labels, WarmUpCosineDecayScheduler
+import os
+import shlex, subprocess
+import threading
 
 
 class NNLayer(Layer):
@@ -55,12 +59,12 @@ class NNLayer(Layer):
         aleatory = np.random.rand(4)
         if aleatory[0] < self.units_prob:
             self.units = self.gauss_mutation(self.units, self.units_lim, 1, int_=True)
-            #self.units = np.random.randint(1, self.units_lim + 1)
+            # self.units = np.random.randint(1, self.units_lim + 1)
         if aleatory[1] < self.act_prob:
             self.activation = random.choice(self.possible_activations)
         if aleatory[2] < self.drop_prob:
             self.dropout = self.gauss_mutation(self.dropout, 1, 0, int_=False)
-            #self.dropout = np.random.rand()
+            # self.dropout = np.random.rand()
 
     def self_copy(self):
         return self.create(units=self.units, activation=self.activation, dropout=self.dropout)
@@ -130,17 +134,17 @@ class CNNLayer(Layer):
         aleatory = np.random.rand(6)
         if aleatory[0] < self.filter_prob:
             self.filters = self.gauss_mutation(self.filters, self.filters_lim, 1, int_=True)
-            #self.filters = np.random.randint(1, self.filters_lim + 1)
+            # self.filters = np.random.randint(1, self.filters_lim + 1)
         if aleatory[1] < self.act_prob:
             self.activation = random.choice(self.possible_activations)
         if aleatory[2] < self.drop_prob:
-            #self.dropout = np.random.rand()
+            # self.dropout = np.random.rand()
             self.dropout = self.gauss_mutation(self.dropout, 1, 0, int_=False)
         if aleatory[4] < self.k_prob:
             self.k_size = tuple(random.choices(self.possible_k, k=2))
         if aleatory[5] < self.maxpool_prob:
             self.maxpool = not self.maxpool
-            #self.maxpool = random.choice([True, False])
+            # self.maxpool = random.choice([True, False])
 
     def self_copy(self):
         return self.create(filters=self.filters, kernel_size=self.k_size,
@@ -237,17 +241,20 @@ class ChromosomeCNN(Chromosome):
     def fitness(self, test=False):
         return self.evaluator.calc(self, test=test)
 
+    def self_copy(self):
+        return ChromosomeCNN(self.cnn_layers, self.nn_layers, self.evaluator)
+
 
 class FitnessCNN(Fitness):
 
-    def set_params(self, data, batch_size=128, epochs=100, early_stop=True, reduce_plateau=True, verbose=1,
+    def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
                    reset=True, test=False, warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
         self.reset = reset
         self.test = test
-        self.time = 0
+        self.seconds = 0
         self.batch_size = batch_size
         self.epochs = epochs
         self.early_stop = early_stop
@@ -262,12 +269,12 @@ class FitnessCNN(Fitness):
             self.y_train = smooth_labels(self.y_train, self.smooth)
         return self
 
-    def set_callbacks(self):
+    def set_callbacks(self, file_model=None):
         callbacks = []
         # Create the Learning rate scheduler.
         total_steps = int(self.epochs * self.y_train.shape[0] / self.batch_size)
         warm_up_steps = int(self.warmup_epochs * self.y_train.shape[0] / self.batch_size)
-        base_steps = self.epochs * (not self.cosine_decay)
+        base_steps = total_steps * (not self.cosine_decay)
         warm_up_lr = WarmUpCosineDecayScheduler(learning_rate_base=self.learning_rate_base,
                                                 total_steps=total_steps,
                                                 warmup_learning_rate=0.0,
@@ -275,29 +282,30 @@ class FitnessCNN(Fitness):
                                                 hold_base_rate_steps=base_steps)
         callbacks.append(warm_up_lr)
 
-        checkpoint_last = ModelCheckpoint('./tmp/model_last.hdf5')
-        checkpoint_acc = ModelCheckpoint('./tmp/model_acc.hdf5', monitor='val_acc', save_best_only=True)
-        checkpoint_loss = ModelCheckpoint('./tmp/model_loss.hdf5', monitor='val_loss', save_best_only=True)
-        callbacks.append(checkpoint_acc)
-        callbacks.append(checkpoint_loss)
-        callbacks.append(checkpoint_last)
+        if file_model is not None:
+            #checkpoint_last = ModelCheckpoint(file_model)
+            #checkpoint_loss = ModelCheckpoint(file_model, monitor='val_loss', save_best_only=True)
+            checkpoint_acc = ModelCheckpoint(file_model, monitor='val_acc', save_best_only=True)
+            callbacks.append(checkpoint_acc)
 
-        if self.early_stop and keras.__version__ == '2.2.4':
-            callbacks.append(EarlyStopping(monitor='val_acc', patience=10, restore_best_weights=True))
-        elif self.early_stop:
-            callbacks.append(EarlyStopping(monitor='val_acc', patience=10))
+        if self.early_stop > 0 and keras.__version__ == '2.2.4':
+            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop, restore_best_weights=True))
+        elif self.early_stop > 0:
+            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop))
         if self.reduce_plateu:
             callbacks.append(ReduceLROnPlateau(monitor='val_acc', factor=0.2,
                                                patience=5, verbose=self.verb))
         return callbacks
 
-    def calc(self, chromosome, test=False, lr=0.001):
-        print(chromosome, end="")
+    def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5'):
+        #print(chromosome, end="")
         print("Training...", end=" ")
+        if not test:
+            file_model = None
         try:
-            ti = T.time()
+            ti = time()
             keras.backend.clear_session()
-            callbacks = self.set_callbacks()
+            callbacks = self.set_callbacks(file_model=file_model)
             model = self.decode(chromosome, lr=lr)
             h = model.fit(self.x_train, self.y_train,
                           batch_size=self.batch_size,
@@ -307,6 +315,7 @@ class FitnessCNN(Fitness):
                           callbacks=callbacks)
 
             if test:
+                model = load_model(file_model)
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
                 score = 1 - np.max(h.history['val_acc'])
@@ -318,30 +327,17 @@ class FitnessCNN(Fitness):
                 print("Some Error!")
                 print(e, "\n")
             keras.backend.clear_session()
-            T.sleep(5)
+            sleep(5)
             return 1 - score[1]
         if self.verb:
-            model = load_model('./tmp/model_last.hdf5')
-            score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
-            score_val = 1 - h.history['val_acc'][-1]
-            print('Last -> Val acc: %0.4f,Test acc: %0.4f' % (score_val, score_test))
-
-            model = load_model('./tmp/model_acc.hdf5')
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             score_val = 1 - np.max(h.history['val_acc'])
-            print('Acc -> Val acc: %0.4f,Test acc: %0.4f' % (score_val, score_test))
-
-            model = load_model('./tmp/model_loss.hdf5')
-            score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
-            score_val = 1 - h.history['val_acc'][int(np.argmin(h.history['val_loss']))]
-            print('Loss -> Val acc: %0.4f,Test acc: %0.4f' % (score_val, score_test))
-
-            #dataset = ['Val', 'Test'][test]
-            #print('%s loss: %0.4f,%s acc: %0.4f' % (dataset, score[0], dataset, score[1]))
+            type_model = ['last', 'best_acc'][test]
+            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val,type_model, score_test))
             self.show_result(h, 'acc')
             self.show_result(h, 'loss')
-        self.time += T.time() - ti
-        print("%0.4f in %0.1f min\n" % (score, (T.time() - ti) / 60))
+        self.seconds += time() - ti
+        print("%0.4f in %0.1f min\n" % (score, (time() - ti) / 60))
         return score
 
     def decode(self, chromosome, lr=0.001):
@@ -432,3 +428,67 @@ class FitnessCNN(Fitness):
         # callbacks=self.callbacks)
         score = model.evaluate(self.x_val, [self.y_val, self.y_val], verbose=1)
         return score
+
+
+class FitnessCNNParallel(Fitness):
+
+    def calc(self, chromosome, test=False):
+        return self.eval_list([chromosome], test=test)[0]
+
+    class Runnable:
+        def __init__(self, chromosome_file, fitness_file, test=False):
+            self.fitness_file = fitness_file
+            self.chromosome_file = chromosome_file
+            self.test = test
+            self.com_line = 'python /home/daniel/proyectos/Tesis/project/GA/NeuroEvolution/train_gen.py -gf %s -ff %s' \
+                            ' -t %d' % (self.chromosome_file, self.fitness_file, int(self.test))
+
+        def run(self):
+            args = shlex.split(self.com_line)
+            subprocess.call(args)
+
+    def set_params(self, chrom_files_folder, fitness_file, max_gpus=1, **kwargs):
+        self.chrom_folder = chrom_files_folder
+        self.fitness_file = fitness_file
+        self.max_gpus = max_gpus
+
+    def eval_list(self, chromosome_list, test=False, **kwargs):
+        filenames = [self.write_chromosome(c, i) for i,c in enumerate(chromosome_list)]
+        functions = []
+        for filename in filenames:
+            runnable = self.Runnable(filename, self.fitness_file, test=test)
+            functions.append(runnable.run)
+
+        threads_waiting = [threading.Thread(target=f) for f in functions]
+        threads_running = []
+        threads_finished = []
+        simultaneous_threads = self.max_gpus
+
+        while len(threads_waiting) > 0 or len(threads_running) > 0:
+            threads_finished += [thr for thr in threads_running if not thr.isAlive()]
+            threads_running = [thr for thr in threads_running if thr.isAlive()]
+
+            if len(threads_running) < simultaneous_threads and len(threads_waiting) > 0:
+                thr = threads_waiting.pop()
+                thr.start()
+                threads_running.append(thr)
+        [thr.join() for thr in threads_finished]
+
+        return [self.read_score(f) for f in filenames]
+
+    def write_chromosome(self, chromosome, id_):
+        filename = os.path.join(self.chrom_folder, "gen_%d.txt" % id_)
+        with open(filename, 'w') as f:
+            f.write(chromosome.__repr__())
+        return filename
+
+    @staticmethod
+    def read_score(filename):
+        score = None
+        with open(filename, 'r') as f:
+            for line in f:
+                if 'Score' in line:
+                    score = float(line.split(':')[1])
+        return score
+
+

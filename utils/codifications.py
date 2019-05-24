@@ -1,6 +1,7 @@
 from time import time
 import numpy as np
 import random
+import pickle
 
 
 class Layer(object):
@@ -43,7 +44,7 @@ class Layer(object):
         elif new_val > max_val:
             new_val = max_val - (new_val - max_val)
         if new_val > max_val or new_val < min_val:
-            new_val = gauss_mutation(val, max_val, min_val, int_)
+            new_val = Layer.gauss_mutation(val, max_val, min_val, int_)
         return new_val
 
 
@@ -76,11 +77,16 @@ class Chromosome(object):
     def fitness(self, test=False):
         raise NotImplementedError
 
+    def self_copy(self):
+        raise NotImplementedError
 
 class Fitness:
+
+    def eval_list(self, chromosome_list, test=False, **kwargs):
+        return[self.calc(c, test=test, **kwargs) for c in chromosome_list]
+
     def calc(self, chromosome, test=False):
         raise NotImplementedError
-        return score
 
     def set_params(self, **kwargs):
         raise NotImplementedError
@@ -92,3 +98,15 @@ class Fitness:
             f.append(self.calc(chromosome))
         print("Acc: %0.3f" % np.mean(f), np.std(f), np.max(f))
         print("Time elapsed: %0.3f" % (time() - ti))
+
+    def save(self, filename):
+        outfile = open(filename, 'wb')
+        pickle.dump(self, outfile)
+        outfile.close()
+
+    @staticmethod
+    def load(file):
+        infile = open(file, 'rb')
+        fit = pickle.load(infile)
+        infile.close()
+        return fit

@@ -21,16 +21,16 @@ class ParentSelector(object):
             self.history_fitness[gen] = chromosome.fitness()
         return self.history_fitness[gen]
 
-    def next_gen(self, population, num_offspring=1):
+    def next_gen(self, population, rank, num_offspring=1):
         next_generation = []
         all_parents = []
         for n in range(num_offspring):
-            offspring, parents = self.get_one_offspring(population, show_probs=n == -1)
+            offspring, parents = self.get_one_offspring(population, rank, show_probs=n == -1)
             next_generation.append(offspring)
             all_parents.append(parents)
         return next_generation, all_parents
 
-    def rank(self, population):
+    def rank_(self, population):
         fitness_result = {}
         for i in range(len(population)):
             gen = population[i].__repr__()
@@ -41,12 +41,12 @@ class ParentSelector(object):
             fitness_result[i] = self.history_fitness[gen]
         return sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize)
 
-    def get_one_offspring(self, population, show_probs=False):
+    def get_one_offspring(self, population, rank, show_probs=False):
         raise NotImplementedError("Not implemented yet!")
 
 
 class RandomParentSelector(ParentSelector):
-    def get_one_offspring(self, population, show_probs=False):
+    def get_one_offspring(self, population, rank, show_probs=False):
         parent1, parent2 = random.choices(population, k=2)
         counter = 10
         while parent1.equals(parent2) and counter < 10:
@@ -54,15 +54,12 @@ class RandomParentSelector(ParentSelector):
             counter += 1
         offspring = parent1.cross(parent2)
         offspring.mutate()
-        self.eval_individual(parent1)
-        self.eval_individual(parent2)
-        self.eval_individual(offspring)
         return offspring, (parent1, parent2)
 
 
 class LinealOrder(ParentSelector):
-    def get_one_offspring(self, population, show_probs=False):
-        ranking = dict(self.rank(population))
+    def get_one_offspring(self, population, rank, show_probs=False):
+        ranking = dict(rank)
         ids = list(ranking.keys())
         probes = np.linspace(len(population), 1, len(population))
         probes /= np.sum(probes)
@@ -73,7 +70,6 @@ class LinealOrder(ParentSelector):
         parent2 = population[idx_2]
         offspring = parent1.cross(parent2)
         offspring.mutate()
-        self.eval_individual(offspring)
         return offspring, (parent1, parent2)
 
 
@@ -86,8 +82,8 @@ class LinealOrderII(ParentSelector):
         super().set_genetic_algorithm(genetic_algorithm)
         self.num_parents = self.ga.num_parents
 
-    def get_one_offspring(self, population, show_probs=False):
-        ranking = dict(self.rank(population))
+    def get_one_offspring(self, population, rank, show_probs=False):
+        ranking = dict(rank)
         idxs = list(ranking.keys())
         positions = np.linspace(1, len(population), len(population))
 
@@ -102,13 +98,12 @@ class LinealOrderII(ParentSelector):
         parent2 = population[idx_2]
         offspring = parent1.cross(parent2)
         offspring.mutate()
-        self.eval_individual(offspring)
         return offspring, (parent1, parent2)
 
 
 class WheelSelection(ParentSelector):
-    def get_one_offspring(self, population, show_probs=False):
-        ranking = dict(self.rank(population))
+    def get_one_offspring(self, population, rank, show_probs=False):
+        ranking = dict(rank)
         idxs = list(ranking.keys())
         fitness = list(ranking.values())
         if self.maximize:
@@ -136,7 +131,6 @@ class WheelSelection(ParentSelector):
         parent2 = population[idx_2]
         offspring = parent1.cross(parent2)
         offspring.mutate()
-        self.eval_individual(offspring)
         return offspring, (parent1, parent2)
 
 
@@ -145,20 +139,38 @@ class TournamentSelection(ParentSelector):
         super().__init__(**kwards)
         self.N = N_participants
 
-    def get_one_offspring(self, population, show_probs=False):
-        idxs = np.linspace(0, len(population) - 1, len(population)).astype(np.int32)
-        idxs_perm = np.random.permutation(idxs)
-        participants_1 = [population[idxs_perm[i]] for i in range(self.N)]
-        participants_2 = [population[idxs_perm[-i]] for i in range(1, self.N + 1)]
+    def get_one_offspring(self, population, rank, show_probs=False):
+        ranking = dict(rank)
+        idxs = list(ranking.keys())
+        fitness = list(ranking.values())
+
+        # the indices are shuffled
+        id_perm = np.linspace(0, len(population) - 1, len(population)).astype(np.int32)
+        id_perm = np.random.permutation(id_perm)
+
+        # the initial N indices are selected for participants of the 1st tournament
+        participants_1 = [population[idxs[id_perm[i]]] for i in range(self.N)]
+
+        # the indices are shuffled again
+        id_perm = np.random.permutation(id_perm)
+
+        # the final N indices are selected for participants of the 2nd tournament, this make
+        # sense when the indices are shuffled only once
+        participants_2 = [population[idxs[id_perm[-i]]] for i in range(1, self.N + 1)]
+        fitness_1 = [fitness[id_perm[i]] for i in range(self.N)]
+        fitness_2 = [fitness[id_perm[-i]] for i in range(1, self.N + 1)]
         if self.maximize:
-            win_1 = np.argmax([self.eval_individual(chrom) for chrom in participants_1])
-            win_2 = np.argmax([self.eval_individual(chrom) for chrom in participants_2])
+            win_1 = np.argmax(fitness_1)
+            win_2 = np.argmax(fitness_2)
+            #win_1 = np.argmax([self.eval_individual(chrom) for chrom in participants_1])
+            #win_2 = np.argmax([self.eval_individual(chrom) for chrom in participants_2])
         else:
-            win_1 = np.argmin([self.eval_individual(chrom) for chrom in participants_1])
-            win_2 = np.argmin([self.eval_individual(chrom) for chrom in participants_2])
-        parent1 = participants_1[win_1]
-        parent2 = participants_2[win_2]
+            win_1 = np.argmin(fitness_1)
+            win_2 = np.argmin(fitness_2)
+            #win_1 = np.argmin([self.eval_individual(chrom) for chrom in participants_1])
+            #win_2 = np.argmin([self.eval_individual(chrom) for chrom in participants_2])
+        parent1 = participants_1[int(win_1)]
+        parent2 = participants_2[int(win_2)]
         offspring = parent1.cross(parent2)
         offspring.mutate()
-        self.eval_individual(offspring)
         return offspring, (parent1, parent2)

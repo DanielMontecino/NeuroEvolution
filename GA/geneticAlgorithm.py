@@ -11,7 +11,7 @@ import pickle
 
 class GeneticAlgorithm(object):
 
-    def __init__(self, chromosome, parent_selector, generations=70, num_population=20,
+    def __init__(self, chromosome, parent_selector, fitness, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
                  folder=None, save_progress=True):
         '''
@@ -19,19 +19,25 @@ class GeneticAlgorithm(object):
 
         :param chromosome: object of class Chromosome
         :param parent_selector: object of class ParentSelector
+        :param fitness: The Fitness Object that eval chromosomes's fitness
         :param generations: Number of generations to evolve the population
         :param num_population: Number of individuals of the population
         :param maximize_fitness: If the fitness has to be maximized (True) or minimized (false)
+        :param statistical_validation: if make a statical validation of the computed fitness, computing it a given number
+         of times and/or making cross validation.
+        :param training_hours: the total hours than the genetic algorithm will look for a solution
+        :param folder: the folder name where the progress are saving and loaded from
+        :param save_progress: if save the progress on each generation
         '''
         self.num_generations = generations
         self.pop_size = num_population
         self.chromosome = chromosome
         self.parent_selector = parent_selector
+        self.fitness_evaluator = fitness
         self.statistical_validation = statistical_validation
         self.maximize = maximize_fitness
         self.history = np.empty((self.pop_size, self.num_generations + 1))
         self.history_fitness = {}
-        self.population_history = []
         self.best_fit_history = {}
         self.parent_selector.set_genetic_algorithm(self)
         self.training_hours = training_hours
@@ -107,8 +113,8 @@ class GeneticAlgorithm(object):
 
     @staticmethod
     def mutation(offspring):
-        for crom in offspring:
-            crom.mutate()
+        for chromosome in offspring:
+            chromosome.mutate()
         return offspring
 
     def actualize_history(self, generation, rank):
@@ -117,11 +123,19 @@ class GeneticAlgorithm(object):
 
     def rank(self, population):
         fitness_result = {}
+        population_ids_to_eval = []
         for i in range(self.pop_size):
             gen = population[i].__repr__()
             if gen not in self.history_fitness.keys():
-                self.history_fitness[gen] = population[i].fitness()
-            fitness_result[i] = self.history_fitness[gen]
+                population_ids_to_eval.append(i)
+                #self.history_fitness[gen] = population[i].fitness()
+            else:
+                fitness_result[i] = self.history_fitness[gen]
+        evaluated_fitness = self.fitness_evaluator.eval_list([population[id_to_eval] for
+                                                              id_to_eval in population_ids_to_eval])
+        for fit, i in zip(evaluated_fitness, population_ids_to_eval):
+            fitness_result[i] = fit
+            self.history_fitness[population[i].__repr__()] = fit
         return sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize)
 
     def show_history(self):
@@ -166,18 +180,10 @@ class GenerationalGA(GeneticAlgorithm):
         print("num parents: %d" % self.num_parents)
         print("offspring size: %d\n" % self.offspring_size)
 
-    def replace(self, population, next_generation, all_parents):
-        fitness_result = {}
-        for i in range(len(population)):
-      
-            gen = population[i].__repr__()
-            if gen not in self.history_fitness.keys():
-                self.history_fitness[gen] = population[i].fitness()
-
-            fitness_result[i] = self.history_fitness[gen]
-        fitness_result = dict(sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize))
-        idxs = list(fitness_result.keys())[:-len(next_generation)]
-        return [population[i] for i in idxs] + next_generation
+    def replace(self, population, rank, next_generation, all_parents):
+        fitness_result = dict(rank)
+        ids = list(fitness_result.keys())[:-len(next_generation)]
+        return [population[i] for i in ids] + next_generation
 
     def maybe_validate_best(self, ranking, population, iters=5):
         '''
@@ -198,8 +204,7 @@ class GenerationalGA(GeneticAlgorithm):
         all_fits = [ranking[0][1]]
         val_rank = dict(ranking)
         if best.__repr__() not in self.best_fit_history.keys():
-            for i in range(1, iters):
-                all_fits.append(best.fitness())
+            all_fits += self.fitness_evaluator.eval_list([best for _ in range(1, iters)])
             self.best_fit_history[best.__repr__()] = all_fits
             self.history_fitness[best.__repr__()] = np.mean(all_fits)
             val_rank[ranking[0][0]] = np.mean(all_fits)
@@ -214,9 +219,8 @@ class GenerationalGA(GeneticAlgorithm):
         print("\nStart evolution process...\n")
         ti = time()
 
-        for self.generation in range(self.generation, self.num_generations + 1):
+        for self.generation in range(self.generation, self.num_generations):
             ranking = self.rank(self.population)
-            self.population_history.append(self.population)
 
             # Make statical validation if is necessary
             ranking = self.maybe_validate_best(ranking, self.population)
@@ -232,8 +236,8 @@ class GenerationalGA(GeneticAlgorithm):
             # Save the generation
             self.maybe_save_genetic_algorithm(verbose=True)
 
-            next_generation, all_parents = self.parent_selector.next_gen(self.population, self.offspring_size)
-            self.population = self.replace(self.population, next_generation, all_parents)
+            next_generation, all_parents = self.parent_selector.next_gen(self.population, ranking, self.offspring_size)
+            self.population = self.replace(self.population, ranking, next_generation, all_parents)
 
             if datetime.datetime.now() > self.limit_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
@@ -245,7 +249,7 @@ class GenerationalGA(GeneticAlgorithm):
                 
         ranking = self.rank(self.population)
         ranking = self.maybe_validate_best(ranking, self.population)
-        self.actualize_history(self.generation, ranking)
+        self.actualize_history(self.generation + 1, ranking)
 
         win_idx, best_fit = ranking[0]
         winner = self.population[win_idx]
@@ -259,18 +263,18 @@ class GenerationalGA(GeneticAlgorithm):
 
     def maybe_make_statistical_validation(self, winner):
         if not self.statistical_validation:
-            return winner.fitness(test=True)
+            return self.fitness_evaluator.calc(winner, test=True)
         print("Making statistical validation")
         winner_data_val = self.best_fit_history[winner.__repr__()]
-        benchmark_data_val = [self.chromosome.fitness() for _ in winner_data_val]
+        benchmark_data_val = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val])
         # winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
         # benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
         print("Benchmark Val score: %0.4f. Winner Val score: %0.4f" % (
         np.mean(benchmark_data_val), np.mean(winner_data_val)))
         t_value, p_value = stats.ttest_ind(winner_data_val, benchmark_data_val)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        winner_data_test = [winner.fitness(test=True) for _ in winner_data_val]
-        benchmark_data_test = [self.chromosome.fitness(test=True) for _ in winner_data_val]
+        winner_data_test = self.fitness_evaluator.eval_list([winner for _ in winner_data_val], test=True)
+        benchmark_data_test = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val], test=True)
         print("Benchmark Test score: %0.4f. Winner Test score: %0.4f" % (
         np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)

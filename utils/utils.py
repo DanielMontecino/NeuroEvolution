@@ -131,3 +131,76 @@ def smooth_labels(y, smooth_factor):
         raise Exception(
             'Invalid label smoothing factor: ' + str(smooth_factor))
     return y
+
+
+import subprocess, re
+
+
+# Nvidia-smi GPU memory parsing.
+# Tested on nvidia-smi 370.23
+
+def run_command(cmd):
+    """Run command, return output as string."""
+    output = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True).communicate()[0]
+    return output.decode("ascii")
+
+
+def list_available_gpus():
+    """Returns list of available GPU ids."""
+    output = run_command("nvidia-smi -L")
+    # lines of the form GPU 0: TITAN X
+    gpu_regex = re.compile(r"GPU (?P<gpu_id>\d+):")
+    result = []
+    for line in output.strip().split("\n"):
+        m = gpu_regex.match(line)
+        assert m, "Couldnt parse " + line
+        result.append(int(m.group("gpu_id")))
+    return result
+
+
+def gpu_memory_maps(mode='free_fraction'):
+    """Returns map of GPU id to memory allocated on that GPU."""
+
+    output = run_command("nvidia-smi -q  -d MEMORY")
+    atacched_gpus = 0
+    for row in output.split('\n'):
+        if 'Attached GPUs' in row:
+            atacched_gpus = int(row.split(':')[1])
+    info_gpu = output.split('GPU ')[1:]
+    assert len(info_gpu) == atacched_gpus
+    final_gpu_dict = {}
+    for gpu_id, info in enumerate(info_gpu):
+        gpu_dict = {}
+        line = info.split('BAR')[0].split('FB')[1].split('\n')
+        line = [l.replace(" ", "") for l in line if ':' in l]
+        for sub_line in line:
+            key, val = sub_line.split(':')
+            gpu_dict[key] = int(val.split('MiB')[0])
+        if mode == 'free_fraction':
+            final_gpu_dict[gpu_id] = gpu_dict['Free'] * 1. / gpu_dict['Total']
+        elif mode == 'used_fraction':
+            final_gpu_dict[gpu_id] = gpu_dict['Used'] * 1. / gpu_dict['Total']
+        elif mode == 'free_memory':
+            final_gpu_dict[gpu_id] = gpu_dict['Free']
+        elif mode == 'all_memory':
+            final_gpu_dict[gpu_id] =  gpu_dict['Total']
+    return final_gpu_dict
+
+
+def pick_gpu_lowest_memory():
+    """Returns GPU with the least allocated memory"""
+
+    memory_gpu_map = [(memory, gpu_id) for (gpu_id, memory) in gpu_memory_map().items()]
+    best_memory, best_gpu = sorted(memory_gpu_map)[0]
+    return best_gpu
+
+
+def verify_free_gpu_memory(min_frac=0.8):
+    gpu_fractions = gpu_memory_maps()
+    gpu_ids, fractions = list(gpu_fractions.keys()), list(gpu_fractions.values())
+    k = int(np.argmax(fractions))
+    id, max_frac = gpu_ids[k], fractions[k]
+    if max_frac < min_frac:
+        print("Waiting for a GPU... free memory fractions: %0.4f" % max_frac)
+        return False
+    return True, id
