@@ -14,11 +14,13 @@ from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatte
 from keras.optimizers import Adam
 from matplotlib import pyplot as plt
 from tensorflow.python.framework.errors_impl import ResourceExhaustedError
+import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 from utils.codifications import Layer, Chromosome, Fitness
 from utils.utils import smooth_labels, WarmUpCosineDecayScheduler
 from utils.BN16 import BatchNormalizationF16
-import os
 import shlex, subprocess
 import threading
 
