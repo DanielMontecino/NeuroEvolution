@@ -52,6 +52,10 @@ class Chromosome(object):
 
     def __init__(self, fitness):
         self.evaluator = fitness
+        self.age = 0
+
+    def increase_age(self):
+        self.age += 1
 
     def set_fitness(self, fit):
         self.evaluator = fit

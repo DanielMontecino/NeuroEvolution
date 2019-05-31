@@ -1,6 +1,7 @@
 import numpy as np
 import keras
 from keras import backend as K
+import subprocess, re
 
 
 def cosine_decay_with_warmup(global_step,
@@ -133,9 +134,6 @@ def smooth_labels(y, smooth_factor):
     return y
 
 
-import subprocess, re
-
-
 # Nvidia-smi GPU memory parsing.
 # Tested on nvidia-smi 370.23
 
@@ -202,5 +200,5 @@ def verify_free_gpu_memory(min_frac=0.8):
     id, max_frac = gpu_ids[k], fractions[k]
     if max_frac < min_frac:
         print("Waiting for a GPU... free memory fractions: %0.4f" % max_frac)
-        return False
+        return False, -1
     return True, id

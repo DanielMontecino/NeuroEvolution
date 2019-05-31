@@ -15,6 +15,9 @@ parser.add_argument('-ff', '--fitness_file', type=str, required=True,
 parser.add_argument('-t', '--test', type=bool, default=False,
                     help="If use the test dataset to evaluate the model trained")
 
+parser.add_argument('-fp', '--float_precision', type=int, default=32,
+                    help='Bits to use in float precision. FP32 is more accurate, but FP is faster and use less memory')
+
 args = vars(parser.parse_args())
 
 
@@ -50,8 +53,10 @@ print("GPU AVAILABLE: :/GPU %d" % gpu_id)
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % gpu_id
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id)
+score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
+                     fp=args['float_precision'])
 print()
 with open(args['gen_file'], 'a') as f:
     f.write("\nScore: %0.6f" % score)

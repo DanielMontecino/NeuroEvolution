@@ -5,17 +5,19 @@ from time import time
 from time import sleep
 
 import keras
+
 import numpy as np
 from keras import Input, Model
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from keras.models import load_model
-from keras.layers import Conv2D, PReLU, LeakyReLU, BatchNormalization, Dropout, MaxPooling2D, Flatten, Dense
+from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.optimizers import Adam
 from matplotlib import pyplot as plt
 from tensorflow.python.framework.errors_impl import ResourceExhaustedError
 
 from utils.codifications import Layer, Chromosome, Fitness
 from utils.utils import smooth_labels, WarmUpCosineDecayScheduler
+from utils.BN16 import BatchNormalizationF16
 import os
 import shlex, subprocess
 import threading
@@ -166,10 +168,10 @@ class CNNLayer(Layer):
 
 
 class ChromosomeCNN(Chromosome):
-    max_layers = {'CNN': 5, 'NN': 3}
+    max_layers = {'CNN': 10, 'NN': 5}
     layers_types = {'CNN': CNNLayer, 'NN': NNLayer}
-    grow_prob = 0.1
-    decrease_prob = 0.1
+    grow_prob = 0.25
+    decrease_prob = 0.25
 
     def __init__(self, cnn_layers=None, nn_layers=None, fitness=None):
         super().__init__(fitness)
@@ -248,12 +250,10 @@ class ChromosomeCNN(Chromosome):
 class FitnessCNN(Fitness):
 
     def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
-                   reset=True, test=False, warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True):
+                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
-        self.reset = reset
-        self.test = test
         self.seconds = 0
         self.batch_size = batch_size
         self.epochs = epochs
@@ -261,6 +261,7 @@ class FitnessCNN(Fitness):
         self.reduce_plateu = reduce_plateau
         self.verb = verbose
         (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = data
+
         self.input_shape = self.x_train[0].shape
         self.num_clases = self.y_train.shape[1]
         self.cosine_decay = cosine_decay
@@ -297,8 +298,11 @@ class FitnessCNN(Fitness):
                                                patience=5, verbose=self.verb))
         return callbacks
 
-    def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5'):
+    def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5', fp=32):
         #print(chromosome, end="")
+        if fp == 16:
+            keras.backend.set_floatx("float%d" % fp)
+            keras.backend.set_epsilon(1e-4)
         print("Training...", end=" ")
         if not test:
             file_model = None
@@ -306,7 +310,7 @@ class FitnessCNN(Fitness):
             ti = time()
             keras.backend.clear_session()
             callbacks = self.set_callbacks(file_model=file_model)
-            model = self.decode(chromosome, lr=lr)
+            model = self.decode(chromosome, lr=lr, fp=fp)
             h = model.fit(self.x_train, self.y_train,
                           batch_size=self.batch_size,
                           epochs=self.epochs,
@@ -315,7 +319,9 @@ class FitnessCNN(Fitness):
                           callbacks=callbacks)
 
             if test:
+                #model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 model = load_model(file_model)
+
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
                 score = 1 - np.max(h.history['val_acc'])
@@ -340,7 +346,7 @@ class FitnessCNN(Fitness):
         print("%0.4f in %0.1f min\n" % (score, (time() - ti) / 60))
         return score
 
-    def decode(self, chromosome, lr=0.001):
+    def decode(self, chromosome, lr=0.001, fp=32):
 
         inp = Input(shape=self.input_shape)
         x = inp
@@ -357,7 +363,9 @@ class FitnessCNN(Fitness):
             else:
                 x = Conv2D(filters, ksize, padding='same')(x)
                 x = LeakyReLU()(x)
-            x = BatchNormalization()(x)
+            if fp == 32:
+                #x = BatchNormalization()(x)
+                pass
             x = Dropout(chromosome.cnn_layers[i].dropout)(x)
             if chromosome.cnn_layers[i].maxpool:
                 x = MaxPooling2D()(x)
@@ -436,27 +444,36 @@ class FitnessCNNParallel(Fitness):
         return self.eval_list([chromosome], test=test)[0]
 
     class Runnable:
-        def __init__(self, chromosome_file, fitness_file, test=False):
+        def __init__(self, chromosome_file, fitness_file, command, test=False, fp=32):
+            self.command = command
             self.fitness_file = fitness_file
             self.chromosome_file = chromosome_file
             self.test = test
-            self.com_line = 'python /home/daniel/proyectos/Tesis/project/GA/NeuroEvolution/train_gen.py -gf %s -ff %s' \
-                            ' -t %d' % (self.chromosome_file, self.fitness_file, int(self.test))
+            self.fp = fp
+            if test:
+                self.com_line = '%s -gf %s -ff %s -t %d -fp %d' % \
+                            (self.command, self.chromosome_file, self.fitness_file, int(self.test), self.fp)
+            else:
+                self.com_line = '%s -gf %s -ff %s -fp %d' % \
+                                (self.command, self.chromosome_file, self.fitness_file, self.fp)
 
         def run(self):
             args = shlex.split(self.com_line)
             subprocess.call(args)
 
-    def set_params(self, chrom_files_folder, fitness_file, max_gpus=1, **kwargs):
+    def set_params(self, chrom_files_folder, fitness_file, fp=32, max_gpus=1,
+                   main_line='python /home/daniel/proyectos/Tesis/project/GA/NeuroEvolution/train_gen.py', **kwargs):
+        self.main_line = main_line
         self.chrom_folder = chrom_files_folder
         self.fitness_file = fitness_file
         self.max_gpus = max_gpus
+        self.fp = fp
 
     def eval_list(self, chromosome_list, test=False, **kwargs):
         filenames = [self.write_chromosome(c, i) for i,c in enumerate(chromosome_list)]
         functions = []
         for filename in filenames:
-            runnable = self.Runnable(filename, self.fitness_file, test=test)
+            runnable = self.Runnable(filename, self.fitness_file, self.main_line, test=test, fp=self.fp)
             functions.append(runnable.run)
 
         threads_waiting = [threading.Thread(target=f) for f in functions]
@@ -471,6 +488,7 @@ class FitnessCNNParallel(Fitness):
             if len(threads_running) < simultaneous_threads and len(threads_waiting) > 0:
                 thr = threads_waiting.pop()
                 thr.start()
+                sleep(3)
                 threads_running.append(thr)
         [thr.join() for thr in threads_finished]
 

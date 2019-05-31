@@ -38,7 +38,6 @@ class DataManager(object):
             data = get_mnist_variations(self.folder_variations_mnist, self.name)
         else:
             data = cifar100.load_data()
-
         train_data, test_data = self.select_clases(data)
         x_train, y_train = self.limit_examples(train_data)
         x_test, y_test = test_data
@@ -46,11 +45,14 @@ class DataManager(object):
         del data, test_data, train_data
 
         if self.name in ['cifar10', 'cifar100']:
-            x_train = x_train.reshape(-1, 32, 32, 3).astype('float32') / 255.
-            x_test  =  x_test.reshape(-1, 32, 32, 3).astype('float32') / 255.
+            x_train = x_train.reshape(-1, 32, 32, 3).astype('float32')
+            x_test  =  x_test.reshape(-1, 32, 32, 3).astype('float32')
         else:
-            x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
-            x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
+            x_train = x_train.reshape(-1, 28, 28, 1).astype('float32')
+            x_test = x_test.reshape(-1, 28, 28, 1).astype('float32')
+        if np.max(x_train) > 1:
+            x_train = x_train / 255.
+            x_test = x_test / 255.
         y_train = [int(label) for label in y_train]
         y_test  = [int(label) for label in y_test]
         y_train, y_test = self.encode(y_train, y_test)

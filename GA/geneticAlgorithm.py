@@ -13,7 +13,7 @@ class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, fitness, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
-                 folder=None, save_progress=True):
+                 folder=None, save_progress=True, age_survivors_rate=0.0):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -41,10 +41,13 @@ class GeneticAlgorithm(object):
         self.best_fit_history = {}
         self.parent_selector.set_genetic_algorithm(self)
         self.training_hours = training_hours
-        self.filename = self.get_file_to_save(folder)
+        self.save_progress = save_progress
+        self.filename = self.get_file_to_save(folder) if self.save_progress else None
         self.generation = 0
         self.population = []
-        self.save_progress = save_progress
+        self.age_survivors_rate = self.set_age_survivors_rate(age_survivors_rate)
+        self.best_individual = None
+        print("Number of individuals eliminated by age: %d" % self.age_survivors_rate)
         print("Genetic algorithm params")
         print("Number of generations: %d" % self.num_generations)
         print("Population size: %d" % self.pop_size)
@@ -84,8 +87,15 @@ class GeneticAlgorithm(object):
         filename = os.path.join(new_folder, 'GA_experiment')
         return filename
 
+    def set_age_survivors_rate(self, older_rate):
+        if older_rate > 1:
+            older_rate = older_rate * 1. / self.pop_size
+        elif older_rate < 0:
+            older_rate = 0
+        return older_rate
+
     def maybe_save_genetic_algorithm(self, verbose=0, force=False):
-        if not self.save_progress or not force:
+        if not self.save_progress and not force:
             return
         if self.filename is None:
             print("Error!, folder is not defined")
@@ -180,11 +190,29 @@ class GenerationalGA(GeneticAlgorithm):
         print("num parents: %d" % self.num_parents)
         print("offspring size: %d\n" % self.offspring_size)
 
-    def replace(self, population, rank, next_generation, all_parents):
-        fitness_result = dict(rank)
-        ids = list(fitness_result.keys())[:-len(next_generation)]
-        return [population[i] for i in ids] + next_generation
+    def increase_population_age(self, population):
+        for individual in population:
+            individual.increase_age()
 
+    def replace(self, population, rank, next_generation, all_parents):
+        ages = [individual.age for individual in population]
+        ages_dict = dict(zip(population, ages))
+        ages_dict = sorted(ages_dict.items(), key=operator.itemgetter(1), reverse=False)
+
+        n_survivors_by_age = int((len(population) - len(next_generation)) * self.age_survivors_rate)
+        survivors_by_age = ages_dict[0:n_survivors_by_age]
+        survivors_by_age = list(dict(survivors_by_age).keys())
+
+        population_ids_ordered_by_fitness = list(dict(rank).keys())
+        final_survivors = survivors_by_age
+        for id_ in population_ids_ordered_by_fitness:
+            if len(final_survivors) == len(population) - len(next_generation):
+                break
+            if population[id_] not in final_survivors:
+                final_survivors.append(population[id_])
+
+        return final_survivors + next_generation
+        
     def maybe_validate_best(self, ranking, population, iters=5):
         '''
         If the evaluation process of each gen is not deterministic, it's necessary
@@ -198,17 +226,25 @@ class GenerationalGA(GeneticAlgorithm):
         :param iters:       The number of times to compute the metric of the best gen of the generation
         :return:
         '''
-        if not self.statistical_validation:
-            return ranking
-        best = population[ranking[0][0]]
-        all_fits = [ranking[0][1]]
-        val_rank = dict(ranking)
-        if best.__repr__() not in self.best_fit_history.keys():
-            all_fits += self.fitness_evaluator.eval_list([best for _ in range(1, iters)])
-            self.best_fit_history[best.__repr__()] = all_fits
-            self.history_fitness[best.__repr__()] = np.mean(all_fits)
-            val_rank[ranking[0][0]] = np.mean(all_fits)
-        return sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
+        if self.statistical_validation:
+            while population[ranking[0][0]].__repr__() not in self.best_fit_history.keys():
+                best = population[ranking[0][0]]
+                all_fits = [ranking[0][1]]
+                val_rank = dict(ranking)
+                all_fits += self.fitness_evaluator.eval_list([best for _ in range(1, iters)])
+                self.best_fit_history[best.__repr__()] = all_fits
+                self.history_fitness[best.__repr__()] = np.mean(all_fits)
+                val_rank[ranking[0][0]] = np.mean(all_fits)
+                ranking = sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
+        generational_best = population[ranking[0][0]]
+        fit_best_of_gen = self.history_fitness[generational_best.__repr__()]
+        if self.best_individual is None:
+            self.best_individual = generational_best
+        elif self.maximize and fit_best_of_gen >= self.history_fitness[self.best_individual.__repr__()]:
+            self.best_individual = generational_best
+        elif not self.maximize and fit_best_of_gen <= self.history_fitness[self.best_individual.__repr__()]:
+            self.best_individual = generational_best
+        return ranking
 
     def evolve(self, show=True):
         if self.generation == 0 or self.population == []:
@@ -221,11 +257,10 @@ class GenerationalGA(GeneticAlgorithm):
 
         for self.generation in range(self.generation, self.num_generations):
             ranking = self.rank(self.population)
-
             # Make statical validation if is necessary
             ranking = self.maybe_validate_best(ranking, self.population)
             self.actualize_history(self.generation, ranking)
-
+            self.increase_population_age(self.population)
             # To show the progress of the evolution
             if (self.num_generations <= 10 or (self.generation % int(self.num_generations / 10) == 0)) and show:
                 print("%d) best fit: %0.3f in batch time: %0.2f mins" %
@@ -236,23 +271,23 @@ class GenerationalGA(GeneticAlgorithm):
             # Save the generation
             self.maybe_save_genetic_algorithm(verbose=True)
 
-            next_generation, all_parents = self.parent_selector.next_gen(self.population, ranking, self.offspring_size)
-            self.population = self.replace(self.population, ranking, next_generation, all_parents)
-
             if datetime.datetime.now() > self.limit_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
-                win_idx, best_fit = ranking[0]
-                winner = self.population[win_idx]
+                winner = self.best_individual
+                best_fit = self.history_fitness[winner.__repr__()]
                 print("Best fit 'til now : %0.4f" % best_fit)
                 print(winner)
                 return winner, best_fit, ranking
-                
+
+            next_generation, all_parents = self.parent_selector.next_gen(self.population, ranking, self.offspring_size)
+            self.population = self.replace(self.population, ranking, next_generation, all_parents)
+
         ranking = self.rank(self.population)
         ranking = self.maybe_validate_best(ranking, self.population)
         self.actualize_history(self.generation + 1, ranking)
 
-        win_idx, best_fit = ranking[0]
-        winner = self.population[win_idx]
+        winner = self.best_individual
+        best_fit = self.history_fitness[winner.__repr__()]
         fit_test = self.maybe_make_statistical_validation(winner)
 
         if show:
