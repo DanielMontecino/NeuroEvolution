@@ -21,6 +21,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 from utils.codifications import Layer, Chromosome, Fitness
 from utils.utils import smooth_labels, WarmUpCosineDecayScheduler
 from utils.BN16 import BatchNormalizationF16
+from utils.lr_finder import LRFinder
 import shlex, subprocess
 import threading
 
@@ -252,7 +253,7 @@ class ChromosomeCNN(Chromosome):
 class FitnessCNN(Fitness):
 
     def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
-                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True):
+                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
@@ -262,6 +263,7 @@ class FitnessCNN(Fitness):
         self.early_stop = early_stop
         self.reduce_plateu = reduce_plateau
         self.verb = verbose
+        self.find_lr = find_lr
         (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = data
 
         self.input_shape = self.x_train[0].shape
@@ -300,19 +302,34 @@ class FitnessCNN(Fitness):
                                                patience=5, verbose=self.verb))
         return callbacks
 
+    def get_good_lr(self, model, model_file):
+        lr_finder = LRFinder(model, model_file)
+        lr = lr_finder.find(self.x_train, self.y_train, start_lr=0.000001, end_lr=10,
+                            batch_size=self.batch_size, epochs=2, num_batches=300, return_model=False)
+        return lr
+
     def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5', fp=32):
-        #print(chromosome, end="")
-        if fp == 16:
-            keras.backend.set_floatx("float%d" % fp)
-            keras.backend.set_epsilon(1e-4)
         print("Training...", end=" ")
-        if not test:
+        if fp == 16 or fp == 160:
+            keras.backend.set_floatx("float16")
+            keras.backend.set_epsilon(1e-4)
+        if not test and not self.find_lr:
             file_model = None
         try:
             ti = time()
             keras.backend.clear_session()
             callbacks = self.set_callbacks(file_model=file_model)
             model = self.decode(chromosome, lr=lr, fp=fp)
+
+            if self.find_lr:
+                model.save('temp.hdf5')
+                lr = self.get_good_lr(model, file_model)
+                self.learning_rate_base = lr
+                # Set the learning rate
+                model = load_model('temp.hdf5', {'BatchNormalizationF16': BatchNormalizationF16})
+                keras.backend.set_value(model.optimizer.lr, lr)
+                print("Learning Rate founded: %0.5f" % lr)
+
             h = model.fit(self.x_train, self.y_train,
                           batch_size=self.batch_size,
                           epochs=self.epochs,
@@ -321,8 +338,8 @@ class FitnessCNN(Fitness):
                           callbacks=callbacks)
 
             if test:
-                #model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
-                model = load_model(file_model)
+                model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
+                #model = load_model(file_model)
 
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
@@ -365,9 +382,15 @@ class FitnessCNN(Fitness):
             else:
                 x = Conv2D(filters, ksize, padding='same')(x)
                 x = LeakyReLU()(x)
-            if fp == 32:
-                #x = BatchNormalization()(x)
+                
+            if fp in [320, 160]:
+                # fp = 320 to no use BN with FP32 and = 160 to not use BN with FP16
                 pass
+            elif fp == 32:
+                x = BatchNormalization()(x)
+            else:
+                x = BatchNormalizationF16()(x)
+                
             x = Dropout(chromosome.cnn_layers[i].dropout)(x)
             if chromosome.cnn_layers[i].maxpool:
                 x = MaxPooling2D()(x)
@@ -398,8 +421,11 @@ class FitnessCNN(Fitness):
     @staticmethod
     def show_result(history, metric='acc'):
         epochs = np.linspace(0, len(history.history['acc']) - 1, len(history.history['acc']))
+        argmax_val = np.argmax(history.history['val_%s' % metric])
         plt.plot(epochs, history.history['val_%s' % metric], label='validation')
         plt.plot(epochs, history.history[metric], label='train')
+        plt.scatter(epochs[argmax_val], history.history['val_%s' % metric][argmax_val],
+                    label='max val_%s' % metric, c='r')
         plt.legend()
         plt.xlabel('Epochs')
         plt.ylabel(metric)

@@ -3,6 +3,7 @@ from keras import initializers, regularizers, constraints
 from keras import backend as K
 from keras.backend.tensorflow_backend import tf, _regular_normalize_batch_in_training
 
+
 class BatchNormalizationF16(Layer):
 
     def __init__(self,
@@ -134,10 +135,14 @@ class BatchNormalizationF16(Layer):
         if K.backend() != 'cntk':
             sample_size = K.prod([K.shape(inputs)[axis]
                                   for axis in reduction_axes])
-            sample_size = K.cast(sample_size, dtype=K.dtype(inputs))
-
+            sample_size = K.cast(sample_size, dtype=tf.float32)
+            aux = (1.0 + self.epsilon) / sample_size
+            aux = K.cast(aux, dtype=K.dtype(inputs))
             # sample variance - unbiased estimator of population variance
-            variance *= sample_size / (sample_size - (1.0 + self.epsilon))
+            variance *= 1 / (1 - aux)
+            #variance = K.print_tensor(variance, message='variance = ')
+            # sample variance - unbiased estimator of population variance
+            #ariance *= sample_size / (sample_size - (1.0 + self.epsilon))
 
         self.add_update([K.moving_average_update(self.moving_mean,
                                                  mean,
@@ -175,3 +180,5 @@ class BatchNormalizationF16(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape
+
+

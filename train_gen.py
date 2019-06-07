@@ -26,13 +26,13 @@ def get_chromosome_from_file(filename):
     nn_layers = []
     with open(filename, 'r') as f:
         for line in f:
-            params = line.split('|')
+            params = line.split('|')            
             if 'CNN' == params[0]:
                 filters = int(params[1].split(':')[1])
                 kernel = literal_eval(params[2].split(':')[1])
                 activation = params[3].split(':')[1]
                 dropout = float(params[4].split(':')[1])
-                maxpool = bool(params[5].split(':')[1])
+                maxpool = bool(int(params[5].split(':')[1]))
                 cnn_layers.append(CNNLayer(filters, kernel, activation, dropout, maxpool))
             if 'NN' == params[0]:
                 units = int(params[1].split(':')[1])
@@ -43,6 +43,7 @@ def get_chromosome_from_file(filename):
 
 
 chromosome = get_chromosome_from_file(args['gen_file'])
+print(chromosome)
 fitness = FitnessCNN.load(args['fitness_file'])
 
 while not verify_free_gpu_memory()[0]:
