@@ -296,10 +296,12 @@ class FitnessCNN(Fitness):
             self.y_train = smooth_labels(self.y_train, self.smooth)
         return self
 
-    def set_callbacks(self, file_model=None):
+    def set_callbacks(self, file_model=None, epochs=None):
+        if epochs is None:
+            epochs = self.epochs
         callbacks = []
         # Create the Learning rate scheduler.
-        total_steps = int(self.epochs * self.y_train.shape[0] / self.batch_size)
+        total_steps = int(epochs * self.y_train.shape[0] / self.batch_size)
         warm_up_steps = int(self.warmup_epochs * self.y_train.shape[0] / self.batch_size)
         base_steps = total_steps * (not self.cosine_decay)
         warm_up_lr = WarmUpCosineDecayScheduler(learning_rate_base=self.learning_rate_base,
@@ -325,7 +327,7 @@ class FitnessCNN(Fitness):
         return callbacks
 
     def get_params(self, precise_mode=False):
-        if precise_mode:
+        if precise_mode and self.precise_epochs is not None:
             return self.precise_epochs
         else:
             return self.epochs
@@ -347,7 +349,7 @@ class FitnessCNN(Fitness):
         try:
             ti = time()
             keras.backend.clear_session()
-            callbacks = self.set_callbacks(file_model=file_model)
+            callbacks = self.set_callbacks(file_model=file_model, epochs=epochs)
             model = self.decode(chromosome, lr=lr, fp=fp)
 
             if self.find_lr:
@@ -413,17 +415,32 @@ class FitnessCNN(Fitness):
                 x = LeakyReLU()(x)
                 
             if fp in [320, 160]:
-                # fp = 320 to no use BN with FP32 and = 160 to not use BN with FP16
+                # fp = 320 to not use BN with FP32 and fp = 160 to not use BN with FP16
                 pass
+            elif fp == 321:
+                x = BatchNormalization()(x)
+                x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+                if chromosome.cnn_layers[i].maxpool:
+                    x = MaxPooling2D()(x)
+                    
             elif fp == 32:
                 x = BatchNormalization()(x)
+                if chromosome.cnn_layers[i].maxpool:
+                    x = MaxPooling2D()(x)
+                x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+                
+            elif fp == 322:
+                if chromosome.cnn_layers[i].maxpool:
+                    x = MaxPooling2D()(x)
+                x = BatchNormalization()(x)
+                x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+                
             else:
                 x = BatchNormalizationF16()(x)
 
-            if chromosome.cnn_layers[i].maxpool:
-                x = MaxPooling2D()(x)
+            
                 
-            x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+            
 
         x = Flatten()(x)
 
