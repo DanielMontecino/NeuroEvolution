@@ -190,12 +190,15 @@ class ChromosomeCNN(Chromosome):
         self.n_cnn = len(cnn_layers)
         self.n_nn = len(nn_layers)
 
-    def random_individual(self):
-        n_cnn = np.random.randint(0, self.max_layers['CNN'] + 1)
-        n_nn = np.random.randint(0, self.max_layers['NN'] + 1)
-        cnn_layers = [self.layers_types['CNN'].random_layer() for _ in range(n_cnn)]
-        nn_layers = [self.layers_types['NN'].random_layer() for _ in range(n_nn)]
-        return ChromosomeCNN(cnn_layers, nn_layers, self.evaluator)
+    @staticmethod
+    def random_individual():
+        max_init_cnn_layers = int(0.7 * ChromosomeCNN.max_layers['CNN'] + 1)
+        max_init_nn_layers = int(0.7 * ChromosomeCNN.max_layers['NN'] + 1)
+        n_cnn = np.random.randint(0, max_init_cnn_layers)
+        n_nn = np.random.randint(0, max_init_nn_layers)
+        cnn_layers = [ChromosomeCNN.layers_types['CNN'].random_layer() for _ in range(n_cnn)]
+        nn_layers = [ChromosomeCNN.layers_types['NN'].random_layer() for _ in range(n_nn)]
+        return ChromosomeCNN(cnn_layers, nn_layers, None)
 
     def simple_individual(self):
         return ChromosomeCNN([], [], self.evaluator)
@@ -209,7 +212,15 @@ class ChromosomeCNN(Chromosome):
     @staticmethod
     def cross_layers(this_layers, other_layers):
         new_layers = []
-
+        p = np.random.rand()
+        p = 0.8
+        for i in range(min(len(other_layers), len(this_layers))):
+            if p > 0.5:
+                new_layers.append(this_layers[i].cross(other_layers[i]))
+            else:
+                new_layers.append(this_layers[-i-1].cross(other_layers[-i-1]))
+        if True:
+            return new_layers
         if -len(other_layers) + 1 >= len(this_layers):
             return [l.self_copy() for l in this_layers]
 
@@ -233,9 +244,17 @@ class ChromosomeCNN(Chromosome):
         for i in range(len(this_layers)):
             this_layers[i].mutate()
         if np.random.rand() < self.grow_prob and len(this_layers) < self.max_layers[type_]:
-            this_layers.append(self.layers_types[type_].random_layer())
+            if len(this_layers) == 0:
+                this_layers.append(self.layers_types[type_].random_layer())
+            else:
+                index_to_add = int(np.random.randint(len(this_layers)))
+                layer_to_copy = this_layers[index_to_add]
+                new_layer = layer_to_copy.self_copy()
+                new_layer.mutate()
+                this_layers.insert(index_to_add, new_layer)
         elif np.random.rand() < self.decrease_prob and len(this_layers) > 0:
-            this_layers.pop()
+            index_to_delete = int(np.random.randint(len(this_layers)))
+            this_layers.pop(index_to_delete)
 
     def __repr__(self):
         rep = ""
@@ -247,13 +266,15 @@ class ChromosomeCNN(Chromosome):
         return self.evaluator.calc(self, test=test)
 
     def self_copy(self):
-        return ChromosomeCNN(self.cnn_layers, self.nn_layers, self.evaluator)
+        new_cnn_layers = [layer.self_copy() for layer in self.cnn_layers]
+        new_nn_layers = [layer.self_copy() for layer in self.nn_layers]
+        return ChromosomeCNN(new_cnn_layers, new_nn_layers, self.evaluator)
 
 
 class FitnessCNN(Fitness):
 
     def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
-                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False):
+                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False, precise_epochs=None):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
@@ -264,6 +285,7 @@ class FitnessCNN(Fitness):
         self.reduce_plateu = reduce_plateau
         self.verb = verbose
         self.find_lr = find_lr
+        self.precise_epochs = precise_epochs
         (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = data
 
         self.input_shape = self.x_train[0].shape
@@ -302,13 +324,20 @@ class FitnessCNN(Fitness):
                                                patience=5, verbose=self.verb))
         return callbacks
 
+    def get_params(self, precise_mode=False):
+        if precise_mode:
+            return self.precise_epochs
+        else:
+            return self.epochs
+
     def get_good_lr(self, model, model_file):
         lr_finder = LRFinder(model, model_file)
         lr = lr_finder.find(self.x_train, self.y_train, start_lr=0.000001, end_lr=10,
                             batch_size=self.batch_size, epochs=2, num_batches=300, return_model=False)
         return lr
 
-    def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5', fp=32):
+    def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
+        epochs = self.get_params(precise_mode)
         print("Training...", end=" ")
         if fp == 16 or fp == 160:
             keras.backend.set_floatx("float16")
@@ -332,7 +361,7 @@ class FitnessCNN(Fitness):
 
             h = model.fit(self.x_train, self.y_train,
                           batch_size=self.batch_size,
-                          epochs=self.epochs,
+                          epochs=epochs,
                           verbose=self.verb,
                           validation_data=(self.x_val, self.y_val),
                           callbacks=callbacks)
@@ -390,10 +419,11 @@ class FitnessCNN(Fitness):
                 x = BatchNormalization()(x)
             else:
                 x = BatchNormalizationF16()(x)
-                
-            x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+
             if chromosome.cnn_layers[i].maxpool:
                 x = MaxPooling2D()(x)
+                
+            x = Dropout(chromosome.cnn_layers[i].dropout)(x)
 
         x = Flatten()(x)
 
@@ -468,22 +498,22 @@ class FitnessCNN(Fitness):
 
 class FitnessCNNParallel(Fitness):
 
-    def calc(self, chromosome, test=False):
-        return self.eval_list([chromosome], test=test)[0]
+    def calc(self, chromosome, test=False, precise_mode=False):
+        return self.eval_list([chromosome], test=test, precise_mode=precise_mode)[0]
 
     class Runnable:
-        def __init__(self, chromosome_file, fitness_file, command, test=False, fp=32):
-            self.command = command
-            self.fitness_file = fitness_file
-            self.chromosome_file = chromosome_file
-            self.test = test
-            self.fp = fp
+        def __init__(self, chromosome_file, fitness_file, command, test=False, fp=32, precise_mode=False):
+
+            self.com_line = '%s -gf %s -ff %s -fp %d' % (command, chromosome_file, fitness_file, fp)
             if test:
-                self.com_line = '%s -gf %s -ff %s -t %d -fp %d' % \
-                            (self.command, self.chromosome_file, self.fitness_file, int(self.test), self.fp)
-            else:
-                self.com_line = '%s -gf %s -ff %s -fp %d' % \
-                                (self.command, self.chromosome_file, self.fitness_file, self.fp)
+                self.com_line += " -t %d" % int(test)
+            if precise_mode:
+                self.com_line += " -pm %d" % int(precise_mode)
+                #self.com_line = '%s -gf %s -ff %s -t %d -fp %d' % \
+                #            (self.command, self.chromosome_file, self.fitness_file, int(self.test), self.fp)
+            #else:
+            #    self.com_line = '%s -gf %s -ff %s -fp %d' % \
+            #                    (self.command, self.chromosome_file, self.fitness_file, self.fp)
 
         def run(self):
             args = shlex.split(self.com_line)
@@ -497,11 +527,12 @@ class FitnessCNNParallel(Fitness):
         self.max_gpus = max_gpus
         self.fp = fp
 
-    def eval_list(self, chromosome_list, test=False, **kwargs):
-        filenames = [self.write_chromosome(c, i) for i,c in enumerate(chromosome_list)]
+    def eval_list(self, chromosome_list, test=False, precise_mode=False, **kwargs):
+        filenames = [self.write_chromosome(c, i) for i, c in enumerate(chromosome_list)]
         functions = []
         for filename in filenames:
-            runnable = self.Runnable(filename, self.fitness_file, self.main_line, test=test, fp=self.fp)
+            runnable = self.Runnable(filename, self.fitness_file, self.main_line, test=test, fp=self.fp,
+                                     precise_mode=precise_mode)
             functions.append(runnable.run)
 
         threads_waiting = [threading.Thread(target=f) for f in functions]

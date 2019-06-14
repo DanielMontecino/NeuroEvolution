@@ -13,7 +13,7 @@ class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, fitness, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
-                 folder=None, save_progress=True, age_survivors_rate=0.0):
+                 folder=None, save_progress=True, age_survivors_rate=0.0, precision_val=False, precision_individuals=5):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -47,6 +47,11 @@ class GeneticAlgorithm(object):
         self.population = []
         self.age_survivors_rate = self.set_age_survivors_rate(age_survivors_rate)
         self.best_individual = None
+        self.make_precision_validation = precision_val
+        self.N_precision_individuals = precision_individuals
+        if self.make_precision_validation:
+            self.history_precision_fitness = {}
+            self.history_precision = np.empty((self.N_precision_individuals, self.num_generations + 1))
         print("Number of individuals eliminated by age: %d" % self.age_survivors_rate)
         print("Genetic algorithm params")
         print("Number of generations: %d" % self.num_generations)
@@ -130,6 +135,12 @@ class GeneticAlgorithm(object):
     def actualize_history(self, generation, rank):
         for i in range(len(rank)):
             self.history[i, generation] = rank[i][1]
+        if self.make_precision_validation:
+            best_generation = [self.population[rank[i][0]] for i in range(self.N_precision_individuals)]
+            best_generation_fitness = [self.history_precision_fitness[individual.__repr__()] for
+                                       individual in best_generation]
+            for i, fit in enumerate(best_generation_fitness):
+                self.history_precision[i, generation] = fit
 
     def rank(self, population):
         fitness_result = {}
@@ -164,6 +175,15 @@ class GeneticAlgorithm(object):
         plt.scatter(epochs, bests, color=colors[0], s=s * 5, marker='*')
         plt.plot(epochs, np.mean(h, axis=0), color=colors[1], lw=1, label='mean', linestyle='--')
         plt.plot(epochs, bests, color=colors[0], lw=1, label='best', linestyle='--')
+
+        if self.make_precision_validation:
+            h2 = self.history_precision
+            bests = [np.min(h2, axis=0), np.max(h2, axis=0)][self.maximize]
+            for a in h2:
+                plt.scatter(epochs, a, s=s, color='r', alpha=0.5, marker='.')
+            plt.scatter(epochs, bests, color='r', s=s * 5, marker='*')
+            plt.plot(epochs, bests, color='r', lw=1, label='precision best', linestyle='--')
+
         if zoom:
             last_gen = h[:, -1]
             lim_inf_y = [np.min(last_gen), np.mean(last_gen)][self.maximize]
@@ -171,6 +191,7 @@ class GeneticAlgorithm(object):
             lim_inf_y = lim_inf_y - (lim_sup_y - lim_inf_y) * 0.1
             lim_sup_y = lim_sup_y + (lim_sup_y - lim_inf_y) * 0.1
             plt.ylim(lim_inf_y, lim_sup_y)
+
         plt.grid()
         plt.legend()
         plt.ylabel('Fitness')
@@ -238,13 +259,59 @@ class GenerationalGA(GeneticAlgorithm):
                 ranking = sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
         generational_best = population[ranking[0][0]]
         fit_best_of_gen = self.history_fitness[generational_best.__repr__()]
+        self.validate_best(generational_best, fit_best_of_gen, self.history_fitness)
+        return ranking
+
+    def validate_best(self, generational_best, generational_best_fitness, history):
         if self.best_individual is None:
             self.best_individual = generational_best
-        elif self.maximize and fit_best_of_gen >= self.history_fitness[self.best_individual.__repr__()]:
+        elif self.maximize and generational_best_fitness >= history[self.best_individual.__repr__()]:
             self.best_individual = generational_best
-        elif not self.maximize and fit_best_of_gen <= self.history_fitness[self.best_individual.__repr__()]:
+        elif (not self.maximize) and generational_best_fitness <= history[self.best_individual.__repr__()]:
             self.best_individual = generational_best
-        return ranking
+
+    def maybe_precision_validation(self, ranking, population):
+
+        if not self.make_precision_validation:
+            return
+
+        # Get the "n_individuals" best individuals of the generation
+        best_generation_individuals = [population[ranking[i][0]] for i in range(self.N_precision_individuals)]
+
+        # Eval the individuals who haven't been evaluated yet (in precision mode)
+        individuals_to_evaluate = []
+        for individual in best_generation_individuals:
+            if individual.__repr__() not in self.history_precision_fitness.keys():
+                individuals_to_evaluate.append(individual)
+
+        evaluated_fitness = self.fitness_evaluator.eval_list(individuals_to_evaluate, precise_mode=True)
+        # Add newly evaluated individuals to the history
+        for fit, individual in zip(evaluated_fitness, individuals_to_evaluate):
+            self.history_precision_fitness[individual.__repr__()] = fit
+
+        # verify if there is a new best individual
+        # Get the best individual of this generation
+        best_generation_fitness = [self.history_precision_fitness[individual.__repr__()]
+                                   for individual in best_generation_individuals]
+        if self.maximize:
+            arg = np.argmax(best_generation_fitness).astype(np.int32)
+        else:
+            arg = np.min(best_generation_fitness).astype(np.int32)
+        best_precision_individual = best_generation_individuals[arg]
+        best_precision_individual_fit = best_generation_fitness[arg]
+
+        self.validate_best(best_precision_individual, best_precision_individual_fit, self.history_precision_fitness)
+        return
+
+    def get_best(self):
+        best = self.best_individual
+        if best is None:
+            return None, None
+        if self.make_precision_validation:
+            fit = self.history_precision_fitness[best.__repr__()]
+        else:
+            fit = self.history_fitness[best.__repr__()]
+        return best, fit
 
     def evolve(self, show=True):
         if self.generation == 0 or self.population == []:
@@ -259,22 +326,23 @@ class GenerationalGA(GeneticAlgorithm):
             ranking = self.rank(self.population)
             # Make statical validation if is necessary
             ranking = self.maybe_validate_best(ranking, self.population)
+            self.maybe_precision_validation(ranking, self.population)
             self.actualize_history(self.generation, ranking)
             self.increase_population_age(self.population)
-            # To show the progress of the evolution
+            # To show the evolution's progress
             if (self.num_generations <= 10 or (self.generation % int(self.num_generations / 10) == 0)) and show:
+                best, fit = self.get_best()
                 print("%d) best fit: %0.3f in batch time: %0.2f mins" %
-                      (self.generation + 1, ranking[0][1], (time() - ti)/60.))
+                      (self.generation + 1, fit, (time() - ti)/60.))
                 print("Current winner:")
-                print(self.population[ranking[0][0]])
+                print(best)
                       
             # Save the generation
             self.maybe_save_genetic_algorithm(verbose=True)
 
             if datetime.datetime.now() > self.limit_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
-                winner = self.best_individual
-                best_fit = self.history_fitness[winner.__repr__()]
+                winner, best_fit = self.get_best()
                 print("Best fit 'til now : %0.4f" % best_fit)
                 print(winner)
                 return winner, best_fit, ranking
@@ -284,10 +352,10 @@ class GenerationalGA(GeneticAlgorithm):
 
         ranking = self.rank(self.population)
         ranking = self.maybe_validate_best(ranking, self.population)
+        self.maybe_precision_validation(ranking, self.population)
         self.actualize_history(self.generation + 1, ranking)
 
-        winner = self.best_individual
-        best_fit = self.history_fitness[winner.__repr__()]
+        winner, best_fit = self.get_best()
         fit_test = self.maybe_make_statistical_validation(winner)
 
         if show:
@@ -298,18 +366,21 @@ class GenerationalGA(GeneticAlgorithm):
 
     def maybe_make_statistical_validation(self, winner):
         if not self.statistical_validation:
-            return self.fitness_evaluator.calc(winner, test=True)
+            return self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
         print("Making statistical validation")
         winner_data_val = self.best_fit_history[winner.__repr__()]
-        benchmark_data_val = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val])
+        benchmark_data_val = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val],
+                                                              precise_mode=True)
         # winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
         # benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
         print("Benchmark Val score: %0.4f. Winner Val score: %0.4f" % (
         np.mean(benchmark_data_val), np.mean(winner_data_val)))
         t_value, p_value = stats.ttest_ind(winner_data_val, benchmark_data_val)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        winner_data_test = self.fitness_evaluator.eval_list([winner for _ in winner_data_val], test=True)
-        benchmark_data_test = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val], test=True)
+        winner_data_test = self.fitness_evaluator.eval_list([winner for _ in winner_data_val], test=True,
+                                                            precise_mode=True)
+        benchmark_data_test = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val], test=True,
+                                                               precise_mode=True)
         print("Benchmark Test score: %0.4f. Winner Test score: %0.4f" % (
         np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)

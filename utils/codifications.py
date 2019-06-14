@@ -60,7 +60,8 @@ class Chromosome(object):
     def set_fitness(self, fit):
         self.evaluator = fit
 
-    def random_individual(self):
+    @staticmethod
+    def random_individual():
         raise NotImplementedError
 
     def simple_individual(self):
