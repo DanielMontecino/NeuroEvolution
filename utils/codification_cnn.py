@@ -171,7 +171,7 @@ class CNNLayer(Layer):
 
 
 class ChromosomeCNN(Chromosome):
-    max_layers = {'CNN': 10, 'NN': 5}
+    max_layers = {'CNN': 10, 'NN': 3}
     layers_types = {'CNN': CNNLayer, 'NN': NNLayer}
     grow_prob = 0.25
     decrease_prob = 0.25
@@ -192,8 +192,8 @@ class ChromosomeCNN(Chromosome):
 
     @staticmethod
     def random_individual():
-        max_init_cnn_layers = int(0.7 * ChromosomeCNN.max_layers['CNN'] + 1)
-        max_init_nn_layers = int(0.7 * ChromosomeCNN.max_layers['NN'] + 1)
+        max_init_cnn_layers = int(0.4 * ChromosomeCNN.max_layers['CNN'] + 1)
+        max_init_nn_layers = int(0.4 * ChromosomeCNN.max_layers['NN'] + 1)
         n_cnn = np.random.randint(0, max_init_cnn_layers)
         n_nn = np.random.randint(0, max_init_nn_layers)
         cnn_layers = [ChromosomeCNN.layers_types['CNN'].random_layer() for _ in range(n_cnn)]
@@ -211,16 +211,22 @@ class ChromosomeCNN(Chromosome):
 
     @staticmethod
     def cross_layers(this_layers, other_layers):
-        new_layers = []
         p = np.random.rand()
         p = 0.8
+
+        new_layers = [l.self_copy() for l in random.choice([this_layers, other_layers])]
+
         for i in range(min(len(other_layers), len(this_layers))):
             if p > 0.5:
-                new_layers.append(this_layers[i].cross(other_layers[i]))
+                new_layer = this_layers[i].cross(other_layers[i])
+                new_layers[i] = new_layer
             else:
-                new_layers.append(this_layers[-i-1].cross(other_layers[-i-1]))
+                new_layer = this_layers[-i-1].cross(other_layers[-i-1])
+                new_layers[-i-1] = new_layer
+
         if True:
             return new_layers
+
         if -len(other_layers) + 1 >= len(this_layers):
             return [l.self_copy() for l in this_layers]
 
@@ -251,7 +257,9 @@ class ChromosomeCNN(Chromosome):
                 layer_to_copy = this_layers[index_to_add]
                 new_layer = layer_to_copy.self_copy()
                 new_layer.mutate()
-                this_layers.insert(index_to_add, new_layer)
+                this_layers.insert(index_to_add + 1, new_layer)
+                if type_ == 'CNN':
+                    layer_to_copy.maxpool = False
         elif np.random.rand() < self.decrease_prob and len(this_layers) > 0:
             index_to_delete = int(np.random.randint(len(this_layers)))
             this_layers.pop(index_to_delete)
@@ -438,10 +446,6 @@ class FitnessCNN(Fitness):
             else:
                 x = BatchNormalizationF16()(x)
 
-            
-                
-            
-
         x = Flatten()(x)
 
         for i in range(chromosome.n_nn):
@@ -568,10 +572,12 @@ class FitnessCNNParallel(Fitness):
                 threads_running.append(thr)
         [thr.join() for thr in threads_finished]
 
-        return [self.read_score(f) for f in filenames]
+        return [self.read_score("%s_score" % f) for f in filenames]
 
     def write_chromosome(self, chromosome, id_):
-        filename = os.path.join(self.chrom_folder, "gen_%d.txt" % id_)
+        filename = os.path.join(self.chrom_folder, "gen_%d" % id_)
+        chromosome.save(filename)
+        return filename
         with open(filename, 'w') as f:
             f.write(chromosome.__repr__())
         return filename

@@ -46,7 +46,7 @@ class GeneticAlgorithm(object):
         self.generation = 0
         self.population = []
         self.age_survivors_rate = self.set_age_survivors_rate(age_survivors_rate)
-        self.best_individual = None
+        self.best_individual = {'winner' : None, 'best_fit' : None}
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
         if self.make_precision_validation:
@@ -234,7 +234,7 @@ class GenerationalGA(GeneticAlgorithm):
 
         return final_survivors + next_generation
         
-    def maybe_validate_best(self, ranking, population, iters=5):
+    def maybe_validate_best(self, ranking, population, iters=3):
         '''
         If the evaluation process of each gen is not deterministic, it's necessary
         to do a statical validation of the performance. To do this, this function
@@ -259,16 +259,19 @@ class GenerationalGA(GeneticAlgorithm):
                 ranking = sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
         generational_best = population[ranking[0][0]]
         fit_best_of_gen = self.history_fitness[generational_best.__repr__()]
-        self.validate_best(generational_best, fit_best_of_gen, self.history_fitness)
+        self.validate_best(generational_best, fit_best_of_gen)
         return ranking
 
-    def validate_best(self, generational_best, generational_best_fitness, history):
-        if self.best_individual is None:
-            self.best_individual = generational_best
-        elif self.maximize and generational_best_fitness >= history[self.best_individual.__repr__()]:
-            self.best_individual = generational_best
-        elif (not self.maximize) and generational_best_fitness <= history[self.best_individual.__repr__()]:
-            self.best_individual = generational_best
+    def validate_best(self, generational_best, generational_best_fitness):
+        if self.best_individual['winner'] is None:
+            self.best_individual['winner'] = generational_best
+            self.best_individual['best_fit'] = generational_best_fitness
+        elif self.maximize and generational_best_fitness >= self.best_individual['best_fit']:
+            self.best_individual['winner'] = generational_best
+            self.best_individual['best_fit'] = generational_best_fitness
+        elif (not self.maximize) and generational_best_fitness <= self.best_individual['best_fit']:
+            self.best_individual['winner'] = generational_best
+            self.best_individual['best_fit'] = generational_best_fitness
 
     def maybe_precision_validation(self, ranking, population):
 
@@ -300,18 +303,11 @@ class GenerationalGA(GeneticAlgorithm):
         best_precision_individual = best_generation_individuals[arg]
         best_precision_individual_fit = best_generation_fitness[arg]
 
-        self.validate_best(best_precision_individual, best_precision_individual_fit, self.history_precision_fitness)
+        self.validate_best(best_precision_individual, best_precision_individual_fit)
         return
 
     def get_best(self):
-        best = self.best_individual
-        if best is None:
-            return None, None
-        if self.make_precision_validation:
-            fit = self.history_precision_fitness[best.__repr__()]
-        else:
-            fit = self.history_fitness[best.__repr__()]
-        return best, fit
+        return self.best_individual['winner'], self.best_individual['best_fit']
 
     def evolve(self, show=True):
         if self.generation == 0 or self.population == []:
@@ -357,6 +353,8 @@ class GenerationalGA(GeneticAlgorithm):
 
         winner, best_fit = self.get_best()
         fit_test = self.maybe_make_statistical_validation(winner)
+        self.best_individual['test'] = fit_test
+        self.maybe_save_genetic_algorithm()
 
         if show:
             print("Best Gen -> \n%s" % winner)

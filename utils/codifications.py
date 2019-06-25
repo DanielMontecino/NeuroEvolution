@@ -85,6 +85,19 @@ class Chromosome(object):
     def self_copy(self):
         raise NotImplementedError
 
+    def save(self, filename):
+        outfile = open(filename, 'wb')
+        pickle.dump(self, outfile)
+        outfile.close()
+
+    @staticmethod
+    def load(filename):
+        infile = open(filename, 'rb')
+        loaded_chromosome = pickle.load(infile)
+        infile.close()
+        return loaded_chromosome
+
+
 class Fitness:
 
     def eval_list(self, chromosome_list, test=False, **kwargs):

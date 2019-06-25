@@ -2,6 +2,7 @@ import argparse
 from ast import literal_eval
 from utils.utils import verify_free_gpu_memory
 from utils.codification_cnn import CNNLayer, NNLayer, ChromosomeCNN, FitnessCNN
+from utils.codifications import Chromosome, Fitness
 from time import sleep
 import os
 
@@ -24,7 +25,7 @@ parser.add_argument('-pm', '--precise_mode', type=bool, default=False,
 
 args = vars(parser.parse_args())
 
-
+'''
 def get_chromosome_from_file(filename):
     cnn_layers = []
     nn_layers = []
@@ -45,10 +46,12 @@ def get_chromosome_from_file(filename):
                 nn_layers.append(NNLayer(units, activation, dropout))
     return ChromosomeCNN(cnn_layers, nn_layers)
 
-
 chromosome = get_chromosome_from_file(args['gen_file'])
-print(chromosome)
 fitness = FitnessCNN.load(args['fitness_file'])
+'''
+chromosome = Chromosome.load(args['gen_file'])
+print(chromosome)
+fitness = Fitness.load(args['fitness_file'])
 
 while not verify_free_gpu_memory()[0]:
     sleep(3)
@@ -63,7 +66,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
                      fp=args['float_precision'], precise_mode=args['precise_mode'])
 print()
-with open(args['gen_file'], 'a') as f:
+with open("%s_score" % args['gen_file'], 'a') as f:
     f.write("\nScore: %0.6f" % score)
 print("Score: %0.4f" % score)
 
