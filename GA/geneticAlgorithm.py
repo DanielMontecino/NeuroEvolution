@@ -46,7 +46,7 @@ class GeneticAlgorithm(object):
         self.generation = 0
         self.population = []
         self.age_survivors_rate = self.set_age_survivors_rate(age_survivors_rate)
-        self.best_individual = {'winner' : None, 'best_fit' : None}
+        self.best_individual = {'winner': None, 'best_fit': None}
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
         if self.make_precision_validation:
@@ -149,7 +149,7 @@ class GeneticAlgorithm(object):
             gen = population[i].__repr__()
             if gen not in self.history_fitness.keys():
                 population_ids_to_eval.append(i)
-                #self.history_fitness[gen] = population[i].fitness()
+                # self.history_fitness[gen] = population[i].fitness()
             else:
                 fitness_result[i] = self.history_fitness[gen]
         evaluated_fitness = self.fitness_evaluator.eval_list([population[id_to_eval] for
@@ -162,7 +162,7 @@ class GeneticAlgorithm(object):
     def show_history(self):
         self.show_history_()
         self.show_history_(zoom=True)
-        
+
     def show_history_(self, zoom=False):
         colors = np.array([[31, 119, 180], [255, 127, 14]]) / 255.
         h = self.history
@@ -233,7 +233,7 @@ class GenerationalGA(GeneticAlgorithm):
                 final_survivors.append(population[id_])
 
         return final_survivors + next_generation
-        
+
     def maybe_validate_best(self, ranking, population, iters=3):
         '''
         If the evaluation process of each gen is not deterministic, it's necessary
@@ -329,18 +329,19 @@ class GenerationalGA(GeneticAlgorithm):
             if (self.num_generations <= 10 or (self.generation % int(self.num_generations / 10) == 0)) and show:
                 best, fit = self.get_best()
                 print("%d) best fit: %0.3f in batch time: %0.2f mins" %
-                      (self.generation + 1, fit, (time() - ti)/60.))
+                      (self.generation + 1, fit, (time() - ti) / 60.))
                 print("Current winner:")
                 print(best)
-                      
+
             # Save the generation
             self.maybe_save_genetic_algorithm(verbose=True)
 
             if datetime.datetime.now() > self.limit_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
                 winner, best_fit = self.get_best()
-                print("Best fit 'til now : %0.4f" % best_fit)
+                print("Best fit 'til generation %d : %0.4f" % (self.generation, best_fit))
                 print(winner)
+                break
                 return winner, best_fit, ranking
 
             next_generation, all_parents = self.parent_selector.next_gen(self.population, ranking, self.offspring_size)
@@ -352,36 +353,44 @@ class GenerationalGA(GeneticAlgorithm):
         self.actualize_history(self.generation + 1, ranking)
 
         winner, best_fit = self.get_best()
-        fit_test = self.maybe_make_statistical_validation(winner)
-        self.best_individual['test'] = fit_test
+        val_score, val_std, val_max, test_score, test_std, test_max = self.maybe_make_statistical_validation(winner)
+        self.best_individual['test'] = test_score
         self.maybe_save_genetic_algorithm()
-
         if show:
             print("Best Gen -> \n%s" % winner)
-            print("With Fitness (val): %0.4f and (test): %0.4f" % (best_fit, fit_test))
+            print("With Fitness (evo val): %0.4f" % best_fit)
+            print("Val results: mean %0.4f, std %0.4f, max %0.4f" % (val_score, val_std, val_max))
+            print("Test results: mean %0.4f, std %0.4f, max %0.4f" % (test_score, test_std, test_max))
+
             self.show_history()
         return winner, best_fit, ranking
 
     def maybe_make_statistical_validation(self, winner):
         if not self.statistical_validation:
-            return self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
+            val_score, test_score = self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
+            return val_score, 0, val_score, test_score, 0, test_score
         print("Making statistical validation")
-        winner_data_val = self.best_fit_history[winner.__repr__()]
-        benchmark_data_val = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val],
-                                                              precise_mode=True)
+        winner_data_evo_val = self.best_fit_history[winner.__repr__()]
+        winner_data = self.fitness_evaluator.eval_list([winner for _ in winner_data_evo_val], test=True,
+                                                       precise_mode=True)
+
+        benchmark_data = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_evo_val],
+                                                          precise_mode=True, test=True)
+        winner_data_val = [data[0] for data in winner_data]
+        winner_data_test = [data[1] for data in winner_data]
+        benchmark_data_val = [data[0] for data in benchmark_data]
+        benchmark_data_test = [data[1] for data in benchmark_data]
+
         # winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
         # benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
         print("Benchmark Val score: %0.4f. Winner Val score: %0.4f" % (
-        np.mean(benchmark_data_val), np.mean(winner_data_val)))
+            np.mean(benchmark_data_val), np.mean(winner_data_val)))
         t_value, p_value = stats.ttest_ind(winner_data_val, benchmark_data_val)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        winner_data_test = self.fitness_evaluator.eval_list([winner for _ in winner_data_val], test=True,
-                                                            precise_mode=True)
-        benchmark_data_test = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_val], test=True,
-                                                               precise_mode=True)
+
         print("Benchmark Test score: %0.4f. Winner Test score: %0.4f" % (
-        np.mean(benchmark_data_test), np.mean(winner_data_test)))
+            np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        return np.mean(winner_data_test)
-
+        return np.mean(winner_data_val), np.std(winner_data_val), np.max(winner_data_val),\
+               np.mean(winner_data_test), np.std(winner_data_test), np.max(winner_data_test)

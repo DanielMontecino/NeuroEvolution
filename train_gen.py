@@ -66,8 +66,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
                      fp=args['float_precision'], precise_mode=args['precise_mode'])
 print()
-with open("%s_score" % args['gen_file'], 'a') as f:
-    f.write("\nScore: %0.6f" % score)
-print("Score: %0.4f" % score)
+show_score = "Val score: %0.4f" % score[0]
+with open("%s_score" % args['gen_file'], 'w') as f:
+    f.write("\nVal_score: %0.6f" % score[0])
+    if args['test']:
+        f.write("\nTest_score: %0.6f" % score[1])
+        show_score += ", Test score: %0.4f" % score[1]
+print(show_score)
 
 

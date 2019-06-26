@@ -10,7 +10,7 @@ import numpy as np
 from keras import Input, Model
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from keras.models import load_model
-from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization
+from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, SpatialDropout2D, MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.optimizers import Adam
 from matplotlib import pyplot as plt
 from tensorflow.python.framework.errors_impl import ResourceExhaustedError
@@ -380,9 +380,11 @@ class FitnessCNN(Fitness):
                 model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 #model = load_model(file_model)
 
-                score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
+                test_score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
+                val_score = 1 - np.max(h.history['val_acc'])
+                score = (val_score, test_score)
             else:
-                score = 1 - np.max(h.history['val_acc'])
+                score = (1 - np.max(h.history['val_acc']), -1)
         except Exception as e:
             score = [1 / self.num_clases, 1. / self.num_clases]
             if isinstance(e, ResourceExhaustedError):
@@ -392,22 +394,22 @@ class FitnessCNN(Fitness):
                 print(e, "\n")
             keras.backend.clear_session()
             sleep(5)
-            return 1 - score[1]
+            return 1 - score[1], 1 - score[1]
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             score_val = 1 - np.max(h.history['val_acc'])
             type_model = ['last', 'best_acc'][test]
-            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val,type_model, score_test))
+            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val, type_model, score_test))
             self.show_result(h, 'acc')
             self.show_result(h, 'loss')
         self.seconds += time() - ti
-        print("%0.4f in %0.1f min\n" % (score, (time() - ti) / 60))
+        print("%0.4f in %0.1f min\n" % (score[0], (time() - ti) / 60))
         return score
 
     def decode(self, chromosome, lr=0.001, fp=32):
 
         inp = Input(shape=self.input_shape)
-        x = inp
+        x = BatchNormalization()(inp)
 
         for i in range(chromosome.n_cnn):
             act = chromosome.cnn_layers[i].activation
@@ -427,21 +429,24 @@ class FitnessCNN(Fitness):
                 pass
             elif fp == 321:
                 x = BatchNormalization()(x)
-                x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+                x = SpatialDropout2D(chromosome.cnn_layers[i].dropout)(x)
+                #x = Dropout(chromosome.cnn_layers[i].dropout)(x)
                 if chromosome.cnn_layers[i].maxpool:
-                    x = MaxPooling2D()(x)
+                    x = MaxPooling2D(pool_size=3, strides=2)(x)
                     
             elif fp == 32:
                 x = BatchNormalization()(x)
                 if chromosome.cnn_layers[i].maxpool:
-                    x = MaxPooling2D()(x)
-                x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+                    x = MaxPooling2D(pool_size=3, strides=2)(x)
+                x = SpatialDropout2D(chromosome.cnn_layers[i].dropout)(x)
+                # x = Dropout(chromosome.cnn_layers[i].dropout)(x)
                 
             elif fp == 322:
                 if chromosome.cnn_layers[i].maxpool:
-                    x = MaxPooling2D()(x)
+                    x = MaxPooling2D(pool_size=3, strides=2)(x)
                 x = BatchNormalization()(x)
-                x = Dropout(chromosome.cnn_layers[i].dropout)(x)
+                x = SpatialDropout2D(chromosome.cnn_layers[i].dropout)(x)
+                # x = Dropout(chromosome.cnn_layers[i].dropout)(x)
                 
             else:
                 x = BatchNormalizationF16()(x)
@@ -458,6 +463,7 @@ class FitnessCNN(Fitness):
             else:
                 x = Dense(chromosome.nn_layers[i].units)(x)
                 x = LeakyReLU()(x)
+            x = BatchNormalization()(x)
             x = Dropout(chromosome.nn_layers[i].dropout)(x)
         x = Dense(self.num_clases, activation='softmax')(x)
 
@@ -584,11 +590,17 @@ class FitnessCNNParallel(Fitness):
 
     @staticmethod
     def read_score(filename):
-        score = None
+        test_score, val_score = None, None
         with open(filename, 'r') as f:
             for line in f:
-                if 'Score' in line:
-                    score = float(line.split(':')[1])
-        return score
+                if 'Val_score' in line:
+                    val_score = float(line.split(':')[1])
+                if 'Test_score' in line:
+                    test_score = float(line.split(':')[1])
+        if test_score is None:
+            return val_score
+        else:
+            return val_score, test_score
+
 
 

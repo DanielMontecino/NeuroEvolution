@@ -224,15 +224,12 @@ class FitnessSkip(FitnessCNN):
             if fp == 32:
                 x_ = BatchNormalization()(x_)
                 if layer.maxpool:
-                    print("MAXPOOL")
-                    x_ = MaxPooling2D()(x_)
-                x_ = Dropout(layer.dropout)(x_)
+                    x_ = MaxPooling2D(pool_size=3, strides=2)(x_)
             else:
                 x_ = BatchNormalizationF16()(x_)
                 if layer.maxpool:
-                    print("MAXPOOL")
-                    x_ = MaxPooling2D()(x_)
-                x_ = Dropout(layer.dropout)(x_)
+                    x_ = MaxPooling2D(pool_size=3, strides=2)(x_)
+            x_ = Dropout(layer.dropout)(x_)
 
             return x_
 
@@ -262,7 +259,7 @@ class FitnessSkip(FitnessCNN):
             layers.append(decode_layer(cnn_layers[block + 1], x))
 
         if len(layers) == 0:
-            x = Flatten()(inp)
+            x = Flatten()(x)
         else:
             x = Flatten()(layers[-1])
 
