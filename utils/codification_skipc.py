@@ -1,7 +1,8 @@
 
 import numpy as np
 from keras import Input, Model
-from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization
+from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout,SpatialDropout2D
+from keras.layers import MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.optimizers import Adam
 from keras.layers.merge import concatenate
 import os
@@ -203,10 +204,19 @@ class Connections:
 
 
 class FitnessSkip(FitnessCNN):
+    maxpool_overlap = False
+    spatial_dropout = False
 
     def decode(self, chromosome, lr=0.001, fp=32):
         connections = chromosome.connections.matrix
         cnn_layers = chromosome.cnn_layers
+
+        if self.maxpool_overlap:
+            ps = 3
+            st = 2
+        else:
+            ps = 2
+            st = 2
 
         def decode_layer(layer, inp_):
             act_ = layer.activation
@@ -224,14 +234,28 @@ class FitnessSkip(FitnessCNN):
             if fp == 32:
                 x_ = BatchNormalization()(x_)
                 if layer.maxpool:
-                    x_ = MaxPooling2D(pool_size=3, strides=2)(x_)
+                    x_ = MaxPooling2D(pool_size=ps, strides=st)(x_)
             else:
                 x_ = BatchNormalizationF16()(x_)
                 if layer.maxpool:
-                    x_ = MaxPooling2D(pool_size=3, strides=2)(x_)
-            x_ = Dropout(layer.dropout)(x_)
+                    x_ = MaxPooling2D(pool_size=ps, strides=st)(x_)
+            if self.spatial_dropout:
+                x_ = SpatialDropout2D(layer.dropout)(x_)
+            else:
+                x_ = Dropout(layer.dropout)(x_)
 
             return x_
+
+        def count_mp(s1, s2):
+            n = 0
+            while True:
+                if s1 == s2:
+                    return n
+                if self.maxpool_overlap:
+                    s1 = int((s1 + 1) / 2 - 1)
+                else:
+                    s1 = int(s1/2)
+                n += 1
 
         inp = Input(shape=self.input_shape)
         x = BatchNormalization()(inp)
@@ -250,9 +274,11 @@ class FitnessSkip(FitnessCNN):
                 shapes = [l._shape_as_list()[1] for l in input_connections]
                 min_shape = np.min(shapes)
                 for k in range(len(input_connections)):
-                    maxpool_size = int(shapes[k] / min_shape)
-                    if maxpool_size > 1:
-                        input_connections[k] = MaxPooling2D(maxpool_size)(input_connections[k])
+                    maxpool_size = count_mp(shapes[k], min_shape) + 1
+
+                    while maxpool_size > 1:
+                        input_connections[k] = MaxPooling2D(pool_size=ps, strides=st)(input_connections[k])
+                        maxpool_size -= 1
                 x = concatenate(input_connections)
             else:
                 x = input_connections[0]

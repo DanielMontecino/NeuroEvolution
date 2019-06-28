@@ -1,0 +1,10 @@
+CNN|F:73|K:(7,5)|A:relu|D:0.495|M:1
+CNN|F:86|K:(7,7)|A:elu|D:0.395|M:0
+CNN|F:73|K:(7,7)|A:sigmoid|D:0.337|M:0
+NN|U:478|A:relu|D:0.230
+NN|U:509|A:relu|D:0.181
+1
+01
+
+With Fitness (val): 0.0304 and (test): 0.0295
+
