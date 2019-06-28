@@ -49,6 +49,7 @@ class GeneticAlgorithm(object):
         self.best_individual = {'winner': None, 'best_fit': None}
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
+        self.generations_without_improve = 0
         if self.make_precision_validation:
             self.history_precision_fitness = {}
             self.history_precision = np.empty((self.N_precision_individuals, self.num_generations + 1))
@@ -133,6 +134,11 @@ class GeneticAlgorithm(object):
         return offspring
 
     def actualize_history(self, generation, rank):
+        while generation >= self.history.shape[1]:
+            self.history = np.append(self.history, np.zeros((self.history.shape[0], 1)), axis=1)
+            self.history_precision = np.append(self.history_precision,
+                                               np.zeros((self.history_precision.shape[0], 1)), axis=1)
+
         for i in range(len(rank)):
             self.history[i, generation] = rank[i][1]
         if self.make_precision_validation:
@@ -214,6 +220,7 @@ class GenerationalGA(GeneticAlgorithm):
     def increase_population_age(self, population):
         for individual in population:
             individual.increase_age()
+        self.generations_without_improve += 1
 
     def replace(self, population, rank, next_generation, all_parents):
         ages = [individual.age for individual in population]
@@ -266,12 +273,15 @@ class GenerationalGA(GeneticAlgorithm):
         if self.best_individual['winner'] is None:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
-        elif self.maximize and generational_best_fitness >= self.best_individual['best_fit']:
+            self.generations_without_improve = 0
+        elif self.maximize and generational_best_fitness > self.best_individual['best_fit']:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
-        elif (not self.maximize) and generational_best_fitness <= self.best_individual['best_fit']:
+            self.generations_without_improve = 0
+        elif (not self.maximize) and generational_best_fitness < self.best_individual['best_fit']:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
+            self.generations_without_improve = 0
 
     def maybe_precision_validation(self, ranking, population):
 
@@ -336,10 +346,23 @@ class GenerationalGA(GeneticAlgorithm):
             # Save the generation
             self.maybe_save_genetic_algorithm(verbose=True)
 
-            if datetime.datetime.now() > self.limit_time:
+            # Conditions to break the evolution process
+            break_for_no_improvement = (self.generations_without_improve > self.generation / 2) and \
+                                       self.generation >= self.num_generations
+            break_for_time = datetime.datetime.now() > self.limit_time
+
+            if break_for_no_improvement or break_for_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
                 winner, best_fit = self.get_best()
-                print("Best fit 'til generation %d : %0.4f" % (self.generation, best_fit))
+                if break_for_no_improvement:
+                    print("Breaking because there isn't improvement.")
+                    print("Current generation: %d" % int(self.generation))
+                    print("Generations without improve: %d" % self.generations_without_improve)
+                if break_for_time:
+                    print("Breaking because time limit was reached")
+                    print("Limit time: %0.4f hours" % self.training_hours)
+                    print("Transcurred time: %0.4f minutes" % ((datetime.datetime.now() - self.limit_time) / 60))
+                print("Best fit until generation %d : %0.4f" % (self.generation, best_fit))
                 print(winner)
                 break
                 return winner, best_fit, ranking
@@ -392,5 +415,5 @@ class GenerationalGA(GeneticAlgorithm):
             np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        return np.mean(winner_data_val), np.std(winner_data_val), np.max(winner_data_val),\
+        return np.mean(winner_data_val), np.std(winner_data_val), np.max(winner_data_val), \
                np.mean(winner_data_test), np.std(winner_data_test), np.max(winner_data_test)
