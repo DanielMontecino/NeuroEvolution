@@ -13,7 +13,8 @@ class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, fitness, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
-                 folder=None, save_progress=True, age_survivors_rate=0.0, precision_val=False, precision_individuals=5):
+                 folder=None, save_progress=True, age_survivors_rate=0.0, precision_val=False,
+                 precision_individuals=5, unlimit_evolve=False):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -50,6 +51,7 @@ class GeneticAlgorithm(object):
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
         self.generations_without_improve = 0
+        self.unlimit_evolve = unlimit_evolve
         if self.make_precision_validation:
             self.history_precision_fitness = {}
             self.history_precision = np.empty((self.N_precision_individuals, self.num_generations + 1))
@@ -328,7 +330,8 @@ class GenerationalGA(GeneticAlgorithm):
         print("\nStart evolution process...\n")
         ti = time()
 
-        for self.generation in range(self.generation, self.num_generations):
+        lim_generations = [self.num_generations, 10000][self.unlimit_evolve]
+        for self.generation in range(self.generation, lim_generations):
             ranking = self.rank(self.population)
             # Make statical validation if is necessary
             ranking = self.maybe_validate_best(ranking, self.population)
