@@ -1,3 +1,4 @@
+import keras
 
 import numpy as np
 from keras import Input, Model
@@ -207,7 +208,7 @@ class FitnessSkip(FitnessCNN):
     maxpool_overlap = False
     spatial_dropout = False
 
-    def decode(self, chromosome, lr=0.001, fp=32):
+    def decode(self, chromosome, lr=0.001, fp=32, dropout_voting=False):
         connections = chromosome.connections.matrix
         cnn_layers = chromosome.cnn_layers
 
@@ -242,7 +243,10 @@ class FitnessSkip(FitnessCNN):
             if self.spatial_dropout:
                 x_ = SpatialDropout2D(layer.dropout)(x_)
             else:
-                x_ = Dropout(layer.dropout)(x_)
+                if dropout_voting:
+                    x_ = Dropout_voting(layer.dropout)(x_)
+                else:
+                    x_ = Dropout(layer.dropout)(x_)
 
             return x_
 
@@ -251,7 +255,7 @@ class FitnessSkip(FitnessCNN):
             while True:
                 if s1 == s2:
                     return n
-                if self.maxpool_overlap:
+                if FitnessSkip.maxpool_overlap:
                     s1 = int((s1 + 1) / 2 - 1)
                 else:
                     s1 = int(s1/2)
@@ -275,7 +279,6 @@ class FitnessSkip(FitnessCNN):
                 min_shape = np.min(shapes)
                 for k in range(len(input_connections)):
                     maxpool_size = count_mp(shapes[k], min_shape) + 1
-
                     while maxpool_size > 1:
                         input_connections[k] = MaxPooling2D(pool_size=ps, strides=st)(input_connections[k])
                         maxpool_size -= 1
@@ -300,7 +303,10 @@ class FitnessSkip(FitnessCNN):
                 x = Dense(chromosome.nn_layers[i].units)(x)
                 x = LeakyReLU()(x)
             x = BatchNormalization()(x)
-            x = Dropout(chromosome.nn_layers[i].dropout)(x)
+            if dropout_voting:
+                x = Dropout_voting(chromosome.nn_layers[i].dropout)(x)
+            else:
+                x = Dropout(chromosome.nn_layers[i].dropout)(x)
         x = Dense(self.num_clases, activation='softmax')(x)
 
         model = Model(inputs=inp, outputs=x)
@@ -310,3 +316,17 @@ class FitnessSkip(FitnessCNN):
                       optimizer=Adam(lr),
                       metrics=['accuracy'])
         return model
+    
+    
+class Dropout_voting(Dropout):
+    def call(self, inputs, training=None):
+        if 0. < self.rate < 1.:
+            noise_shape = self._get_noise_shape(inputs)
+
+            def dropped_inputs():
+                return keras.backend.dropout(inputs, self.rate, noise_shape,
+                                 seed=self.seed)
+            return keras.backend.in_train_phase(dropped_inputs, dropped_inputs,
+                                    training=training)
+        return inputs
+

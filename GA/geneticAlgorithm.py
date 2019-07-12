@@ -51,6 +51,7 @@ class GeneticAlgorithm(object):
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
         self.generations_without_improve = 0
+        self.time = None
         self.unlimit_evolve = unlimit_evolve
         if self.make_precision_validation:
             self.history_precision_fitness = {}
@@ -324,9 +325,10 @@ class GenerationalGA(GeneticAlgorithm):
     def evolve(self, show=True):
         if self.generation == 0 or self.population == []:
             self.population = self.initial_population()
+            self.time = 0
             print("Creating Initial population")
         self.start_time = datetime.datetime.now()
-        self.limit_time = self.start_time + timedelta(hours=self.training_hours)
+        self.limit_time = timedelta(hours=self.training_hours)
         print("\nStart evolution process...\n")
         ti = time()
 
@@ -352,7 +354,9 @@ class GenerationalGA(GeneticAlgorithm):
             # Conditions to break the evolution process
             break_for_no_improvement = (self.generations_without_improve > self.generation / 2) and \
                                        self.generation >= self.num_generations
-            break_for_time = datetime.datetime.now() > self.limit_time
+
+            self.time = datetime.datetime.now() - self.start_time
+            break_for_time = self.time > self.limit_time
 
             if break_for_no_improvement or break_for_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
@@ -364,7 +368,7 @@ class GenerationalGA(GeneticAlgorithm):
                 if break_for_time:
                     print("Breaking because time limit was reached")
                     print("Limit time: %0.4f hours" % self.training_hours)
-                    print("Transcurred time: %0.4f minutes" % ((datetime.datetime.now() - self.limit_time) / 60))
+                    print("Elapsed time: %0.4f minutes" % (self.time.seconds/60))
                 print("Best fit until generation %d : %0.4f" % (self.generation, best_fit))
                 print(winner)
                 break
@@ -382,12 +386,13 @@ class GenerationalGA(GeneticAlgorithm):
         val_score, val_std, val_max, test_score, test_std, test_max = self.maybe_make_statistical_validation(winner)
         self.best_individual['test'] = test_score
         self.maybe_save_genetic_algorithm()
+        self.time = datetime.datetime.now() - self.start_time
         if show:
             print("Best Gen -> \n%s" % winner)
             print("With Fitness (evo val): %0.4f" % best_fit)
             print("Val results: mean %0.4f, std %0.4f, max %0.4f" % (val_score, val_std, val_max))
             print("Test results: mean %0.4f, std %0.4f, max %0.4f" % (test_score, test_std, test_max))
-
+            print("Total elapsed time: %0.4f" % (self.time.seconds / 60))
             self.show_history()
         return winner, best_fit, ranking
 

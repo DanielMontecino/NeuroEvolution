@@ -4,6 +4,21 @@ from keras import backend as K
 import subprocess, re
 
 
+def clr_decay_with_warmup(global_step,
+                             max_lr,
+                             min_lr,
+                             total_steps,
+                             cycles=1):
+
+    step_size = int(total_steps / (2 * cycles) )
+    cycle = np.floor(1 + global_step / (2 * step_size))
+    x = np.abs(global_step / step_size - 2 * cycle + 1)
+
+    learning_rate = min_lr + (max_lr - min_lr) * np.max((0.0, 1.0 - x))
+
+    return np.where(global_step > total_steps, 0.0, learning_rate)
+
+
 def linear_decay_with_warmup(global_step, learning_rate_base, total_steps, warmup_learning_rate, warmup_steps,
                              hold_base_rate_steps):
     """Linear decay schedule with warm up period.
@@ -104,6 +119,49 @@ def cosine_decay_with_warmup(global_step,
     return np.where(global_step > total_steps, 0.0, learning_rate)
 
 
+class CLRScheduler(keras.callbacks.Callback):
+
+    def __init__(self,
+                 max_lr,
+                 min_lr,
+                 total_steps,
+                 cycles=1,
+                 global_step_init=0,
+                 verbose=0):
+
+        super(CLRScheduler, self).__init__()
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.total_steps = total_steps
+        self.cycles = cycles
+        self.global_step = global_step_init
+        self.verbose = verbose
+        self.learning_rates = []
+        self.losses = []
+        self.accs = []
+
+    def on_batch_end(self, batch, logs=None):
+        self.global_step = self.global_step + 1
+        lr = K.get_value(self.model.optimizer.lr)
+        loss = logs['loss']
+        acc = logs['acc']
+        self.accs.append(acc)
+        self.losses.append(loss)
+        self.learning_rates.append(lr)
+
+    def on_batch_begin(self, batch, logs=None):
+        lr = clr_decay_with_warmup(global_step=self.global_step,
+                                   max_lr=self.max_lr,
+                                   min_lr=self.min_lr,
+                                   total_steps=self.total_steps,
+				   cycles=self.cycles)
+
+        K.set_value(self.model.optimizer.lr, lr)
+        if self.verbose > 0:
+            print('\nBatch %05d: setting learning '
+                  'rate to %s.' % (self.global_step + 1, lr))
+
+
 class WarmUpCosineDecayScheduler(keras.callbacks.Callback):
     """Cosine decay with warmup learning rate scheduler
     """
@@ -140,10 +198,16 @@ class WarmUpCosineDecayScheduler(keras.callbacks.Callback):
         self.hold_base_rate_steps = hold_base_rate_steps
         self.verbose = verbose
         self.learning_rates = []
+        self.losses = []
+        self.accs = []
 
     def on_batch_end(self, batch, logs=None):
         self.global_step = self.global_step + 1
         lr = K.get_value(self.model.optimizer.lr)
+        loss = logs['loss']
+        acc = logs['acc']
+        self.accs.append(acc)
+        self.losses.append(loss)
         self.learning_rates.append(lr)
 
     def on_batch_begin(self, batch, logs=None):
@@ -186,7 +250,7 @@ class LinearDecayScheduler(keras.callbacks.Callback):
                 verbose {int} -- 0: quiet, 1: update messages. (default: {0})
                 """
 
-        super(WarmUpCosineDecayScheduler, self).__init__()
+        super(LinearDecayScheduler, self).__init__()
         self.learning_rate_base = learning_rate_base
         self.total_steps = total_steps
         self.global_step = global_step_init
@@ -195,10 +259,17 @@ class LinearDecayScheduler(keras.callbacks.Callback):
         self.hold_base_rate_steps = hold_base_rate_steps
         self.verbose = verbose
         self.learning_rates = []
+        self.losses = []
+        self.accs = []
+
 
     def on_batch_end(self, batch, logs=None):
         self.global_step = self.global_step + 1
         lr = K.get_value(self.model.optimizer.lr)
+        loss = logs['loss']
+        acc = logs['acc']
+        self.accs.append(acc)
+        self.losses.append(loss)
         self.learning_rates.append(lr)
 
     def on_batch_begin(self, batch, logs=None):
@@ -289,7 +360,7 @@ def gpu_memory_maps(mode='free_fraction'):
 def pick_gpu_lowest_memory():
     """Returns GPU with the least allocated memory"""
 
-    memory_gpu_map = [(memory, gpu_id) for (gpu_id, memory) in gpu_memory_map().items()]
+    memory_gpu_map = [(memory, gpu_id) for (gpu_id, memory) in gpu_memory_maps().items()]
     best_memory, best_gpu = sorted(memory_gpu_map)[0]
     return best_gpu
 
