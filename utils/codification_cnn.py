@@ -19,7 +19,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 from utils.codifications import Layer, Chromosome, Fitness
-from utils.utils import smooth_labels, WarmUpCosineDecayScheduler
+from utils.utils import smooth_labels, WarmUpCosineDecayScheduler, CLRScheduler
 from utils.BN16 import BatchNormalizationF16
 from utils.lr_finder import LRFinder
 import shlex, subprocess
@@ -281,16 +281,13 @@ class ChromosomeCNN(Chromosome):
 
 class FitnessCNN(Fitness):
 
-    def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
-                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False, precise_epochs=None):
+    def set_params(self, data, batch_size=128, epochs=100, verbose=1,
+                  base_lr=0.001, smooth_label=False, find_lr=False, precise_epochs=None):
         self.smooth = smooth_label
-        self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
         self.seconds = 0
         self.batch_size = batch_size
         self.epochs = epochs
-        self.early_stop = early_stop
-        self.reduce_plateu = reduce_plateau
         self.verb = verbose
         self.find_lr = find_lr
         self.precise_epochs = precise_epochs
@@ -298,8 +295,6 @@ class FitnessCNN(Fitness):
 
         self.input_shape = self.x_train[0].shape
         self.num_clases = self.y_train.shape[1]
-        self.cosine_decay = cosine_decay
-        # self.set_callbacks = self.set_callbacks()
         if self.smooth > 0:
             self.y_train = smooth_labels(self.y_train, self.smooth)
         return self
@@ -310,28 +305,18 @@ class FitnessCNN(Fitness):
         callbacks = []
         # Create the Learning rate scheduler.
         total_steps = int(epochs * self.y_train.shape[0] / self.batch_size)
-        warm_up_steps = int(self.warmup_epochs * self.y_train.shape[0] / self.batch_size)
-        base_steps = total_steps * (not self.cosine_decay)
-        warm_up_lr = WarmUpCosineDecayScheduler(learning_rate_base=self.learning_rate_base,
-                                                total_steps=total_steps,
-                                                warmup_learning_rate=0.0,
-                                                warmup_steps=warm_up_steps,
-                                                hold_base_rate_steps=base_steps)
-        callbacks.append(warm_up_lr)
 
-        if file_model is not None:
+        clr_schedule = CLRScheduler(max_lr=self.learning_rate_base, min_lr=0.00001,
+                                    total_steps=total_steps)
+        callbacks.append(clr_schedule)
+
+        # This line is not executed
+        if file_model is not None and False:
             #checkpoint_last = ModelCheckpoint(file_model)
             #checkpoint_loss = ModelCheckpoint(file_model, monitor='val_loss', save_best_only=True)
             checkpoint_acc = ModelCheckpoint(file_model, monitor='val_acc', save_best_only=True)
             callbacks.append(checkpoint_acc)
 
-        if self.early_stop > 0 and keras.__version__ == '2.2.4':
-            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop, restore_best_weights=True))
-        elif self.early_stop > 0:
-            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop))
-        if self.reduce_plateu:
-            callbacks.append(ReduceLROnPlateau(monitor='val_acc', factor=0.2,
-                                               patience=5, verbose=self.verb))
         return callbacks
 
     def get_params(self, precise_mode=False):
@@ -346,7 +331,7 @@ class FitnessCNN(Fitness):
                             batch_size=self.batch_size, epochs=2, num_batches=300, return_model=False)
         return lr
 
-    def calc(self, chromosome, test=False, lr=0.001, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
+    def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
         epochs = self.get_params(precise_mode)
         print("Training...", end=" ")
         if fp == 16 or fp == 160:
@@ -358,14 +343,14 @@ class FitnessCNN(Fitness):
             ti = time()
             keras.backend.clear_session()
             callbacks = self.set_callbacks(file_model=file_model, epochs=epochs)
-            model = self.decode(chromosome, lr=lr, fp=fp)
+            model = self.decode(chromosome, fp=fp)
 
             if self.find_lr:
-                model.save('temp.hdf5')
+                model.save('./temp.hdf5')
                 lr = self.get_good_lr(model, file_model)
                 self.learning_rate_base = lr
                 # Set the learning rate
-                model = load_model('temp.hdf5', {'BatchNormalizationF16': BatchNormalizationF16})
+                model = load_model('./temp.hdf5', {'BatchNormalizationF16': BatchNormalizationF16})
                 keras.backend.set_value(model.optimizer.lr, lr)
                 print("Learning Rate founded: %0.5f" % lr)
 
@@ -376,15 +361,13 @@ class FitnessCNN(Fitness):
                           validation_data=(self.x_val, self.y_val),
                           callbacks=callbacks)
 
+            val_score = 1 - np.mean(h.history['val_acc'][-3::])
             if test:
-                model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
-                #model = load_model(file_model)
-
+                #model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 test_score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
-                val_score = 1 - np.max(h.history['val_acc'])
                 score = (val_score, test_score)
             else:
-                score = (1 - np.max(h.history['val_acc']), -1)
+                score = (val_score, -1)
         except Exception as e:
             score = [1 / self.num_clases, 1. / self.num_clases]
             if isinstance(e, ResourceExhaustedError):
@@ -397,16 +380,16 @@ class FitnessCNN(Fitness):
             return 1 - score[1], 1 - score[1]
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
-            score_val = 1 - np.max(h.history['val_acc'])
             type_model = ['last', 'best_acc'][test]
-            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val, type_model, score_test))
+            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (val_score, type_model, score_test))
             self.show_result(h, 'acc')
             self.show_result(h, 'loss')
         self.seconds += time() - ti
-        print("%0.4f in %0.1f min\n" % (score[0], (time() - ti) / 60))
+        print("Val acc %0.4f, Test acc %0.4f. In %0.1f min\n" %
+              (score[0], score[1], (time() - ti) / 60))
         return score
 
-    def decode(self, chromosome, lr=0.001, fp=32):
+    def decode(self, chromosome, fp=32):
 
         inp = Input(shape=self.input_shape)
         x = BatchNormalization()(inp)
@@ -471,7 +454,7 @@ class FitnessCNN(Fitness):
         if self.verb:
             model.summary()
         model.compile(loss='categorical_crossentropy',
-                      optimizer=Adam(lr),
+                      optimizer=Adam(0.001),
                       metrics=['accuracy'])
         return model
 

@@ -390,8 +390,8 @@ class GenerationalGA(GeneticAlgorithm):
         if show:
             print("Best Gen -> \n%s" % winner)
             print("With Fitness (evo val): %0.4f" % best_fit)
-            print("Val results: mean %0.4f, std %0.4f, max %0.4f" % (val_score, val_std, val_max))
-            print("Test results: mean %0.4f, std %0.4f, max %0.4f" % (test_score, test_std, test_max))
+            print("Val results: mean %0.4f, std %0.4f, best %0.4f" % (val_score, val_std, val_max))
+            print("Test results: mean %0.4f, std %0.4f, best %0.4f" % (test_score, test_std, test_max))
             print("Total elapsed time: %0.4f" % (self.time.seconds / 60))
             self.show_history()
         return winner, best_fit, ranking
@@ -423,5 +423,7 @@ class GenerationalGA(GeneticAlgorithm):
             np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)
         print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        return np.mean(winner_data_val), np.std(winner_data_val), np.max(winner_data_val), \
-               np.mean(winner_data_test), np.std(winner_data_test), np.max(winner_data_test)
+        val_best = [np.min(winner_data_val), np,max(winner_data_val)][self.maximize]
+        test_best = [np.min(winner_data_test), np,max(winner_data_test)][self.maximize]
+        return np.mean(winner_data_val), np.std(winner_data_val), val_best, \
+               np.mean(winner_data_test), np.std(winner_data_test), test_best
