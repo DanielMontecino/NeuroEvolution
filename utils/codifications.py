@@ -35,7 +35,7 @@ class Layer(object):
     @staticmethod
     def gauss_mutation(val, max_val, min_val, int_=True):
         m = 0
-        s = (max_val - min_val) / 10.
+        s = (max_val - min_val) / 20.
         new_val = val + random.gauss(m, s)
         if int_:
             new_val = int(new_val)

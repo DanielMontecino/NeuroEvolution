@@ -269,10 +269,10 @@ class GenerationalGA(GeneticAlgorithm):
                 ranking = sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
         generational_best = population[ranking[0][0]]
         fit_best_of_gen = self.history_fitness[generational_best.__repr__()]
-        self.validate_best(generational_best, fit_best_of_gen)
+        self.actualize_best(generational_best, fit_best_of_gen)
         return ranking
 
-    def validate_best(self, generational_best, generational_best_fitness):
+    def actualize_best(self, generational_best, generational_best_fitness):
         if self.best_individual['winner'] is None:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
@@ -316,7 +316,7 @@ class GenerationalGA(GeneticAlgorithm):
         best_precision_individual = best_generation_individuals[arg]
         best_precision_individual_fit = best_generation_fitness[arg]
 
-        self.validate_best(best_precision_individual, best_precision_individual_fit)
+        self.actualize_best(best_precision_individual, best_precision_individual_fit)
         return
 
     def get_best(self):

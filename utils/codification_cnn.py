@@ -361,7 +361,8 @@ class FitnessCNN(Fitness):
                           validation_data=(self.x_val, self.y_val),
                           callbacks=callbacks)
 
-            val_score = 1 - np.mean(h.history['val_acc'][-3::])
+            #val_score = 1 - np.mean(h.history['val_acc'][-3::])
+            val_score = 1 - np.mean([h.history['val_acc'][-1], np.max(h.history['val_acc'])])
             if test:
                 #model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 test_score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
