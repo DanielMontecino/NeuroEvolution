@@ -8,24 +8,27 @@ from datetime import timedelta
 import os
 import pickle
 
+from GA.parentSelector.parentSelector import TournamentSelection
+
 
 class GeneticAlgorithm(object):
 
     def __init__(self, chromosome, parent_selector, fitness, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
                  folder=None, save_progress=True, age_survivors_rate=0.0, precision_val=False,
-                 precision_individuals=5, unlimit_evolve=False):
+                 precision_individuals=5, printn=False, perform_evo=False):
         '''
         Class to generate a basic Genetic Algorithms.
 
+        :type save_progress: bool
         :param chromosome: object of class Chromosome
         :param parent_selector: object of class ParentSelector
         :param fitness: The Fitness Object that eval chromosomes's fitness
         :param generations: Number of generations to evolve the population
         :param num_population: Number of individuals of the population
         :param maximize_fitness: If the fitness has to be maximized (True) or minimized (false)
-        :param statistical_validation: if make a statical validation of the computed fitness, computing it a given number
-         of times and/or making cross validation.
+        :param statistical_validation: if make a statical validation of the computed fitness, computing it a given
+         number of times and/or making cross validation.
         :param training_hours: the total hours than the genetic algorithm will look for a solution
         :param folder: the folder name where the progress are saving and loaded from
         :param save_progress: if save the progress on each generation
@@ -40,28 +43,27 @@ class GeneticAlgorithm(object):
         self.history = np.empty((self.pop_size, self.num_generations + 1))
         self.history_fitness = {}
         self.best_fit_history = {}
-        self.parent_selector.set_genetic_algorithm(self)
+        self.parent_selector.set_params(self.maximize, self.history_fitness)
         self.training_hours = training_hours
         self.save_progress = save_progress
         self.filename = self.get_file_to_save(folder) if self.save_progress else None
         self.generation = 0
         self.population = []
         self.age_survivors_rate = self.set_age_survivors_rate(age_survivors_rate)
-        self.best_individual = {'winner': None, 'best_fit': None}
+        self.best_individual = {'winner': chromosome, 'best_fit': None}
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
-        self.generations_without_improve = 0
-        self.time = None
-        self.unlimit_evolve = unlimit_evolve
+        self.paint = printn
+        self.perfm_evo = [] if perform_evo else None
         if self.make_precision_validation:
             self.history_precision_fitness = {}
             self.history_precision = np.empty((self.N_precision_individuals, self.num_generations + 1))
-        print("Number of individuals eliminated by age: %d" % self.age_survivors_rate)
-        print("Genetic algorithm params")
-        print("Number of generations: %d" % self.num_generations)
-        print("Population size: %d" % self.pop_size)
+        self.print("Number of individuals eliminated by age: %d" % self.age_survivors_rate)
+        self.print("Genetic algorithm params")
+        self.print("Number of generations: %d" % self.num_generations)
+        self.print("Population size: %d" % self.pop_size)
         if self.save_progress:
-            print("Folder to save: %s" % self.filename)
+            self.print("Folder to save: %s" % self.filename)
 
     @staticmethod
     def load_genetic_algorithm(filename=None, folder=None):
@@ -79,8 +81,12 @@ class GeneticAlgorithm(object):
         infile.close()
         return generational
 
+    def print(self, string, end="\n"):
+        if self.paint:
+            print(string, end=end)
+
     @staticmethod
-    def get_file_to_save(folder):
+    def get_folder_to_save(folder):
         if folder is None:
             return None
         os.makedirs(folder, exist_ok=True)
@@ -93,6 +99,11 @@ class GeneticAlgorithm(object):
         str_time = datetime.datetime.now().strftime('%Y-%m-%d-%H:%M')
         new_folder = os.path.join(folder, str(new_ind) + "_" + str_time)
         os.makedirs(new_folder, exist_ok=True)
+        return new_folder
+
+    @staticmethod
+    def get_file_to_save(folder):
+        new_folder = GeneticAlgorithm.get_folder_to_save(folder)
         filename = os.path.join(new_folder, 'GA_experiment')
         return filename
 
@@ -107,16 +118,16 @@ class GeneticAlgorithm(object):
         if not self.save_progress and not force:
             return
         if self.filename is None:
-            print("Error!, folder is not defined")
+            self.print("Error!, folder is not defined")
             return
         if verbose:
-            print("Saving...", end=" ")
+            self.print("Saving...", end=" ")
         ti = time()
         outfile = open(self.filename, 'wb')
         pickle.dump(self, outfile)
         outfile.close()
         if verbose:
-            print("Elapsed saved time: %0.3f" % (time() - ti))
+            self.print("Elapsed saved time: %0.3f" % (time() - ti))
 
     def create_random_individual(self):
         return self.chromosome.random_individual()
@@ -137,11 +148,6 @@ class GeneticAlgorithm(object):
         return offspring
 
     def actualize_history(self, generation, rank):
-        while generation >= self.history.shape[1]:
-            self.history = np.append(self.history, np.zeros((self.history.shape[0], 1)), axis=1)
-            self.history_precision = np.append(self.history_precision,
-                                               np.zeros((self.history_precision.shape[0], 1)), axis=1)
-
         for i in range(len(rank)):
             self.history[i, generation] = rank[i][1]
         if self.make_precision_validation:
@@ -154,11 +160,10 @@ class GeneticAlgorithm(object):
     def rank(self, population):
         fitness_result = {}
         population_ids_to_eval = []
-        for i in range(self.pop_size):
+        for i in range(len(population)):
             gen = population[i].__repr__()
             if gen not in self.history_fitness.keys():
                 population_ids_to_eval.append(i)
-                # self.history_fitness[gen] = population[i].fitness()
             else:
                 fitness_result[i] = self.history_fitness[gen]
         evaluated_fitness = self.fitness_evaluator.eval_list([population[id_to_eval] for
@@ -217,15 +222,18 @@ class GenerationalGA(GeneticAlgorithm):
             self.num_parents = int(kwargs['num_population'] * num_parents)
         super().__init__(**kwargs)
         self.offspring_size = self.pop_size - self.num_parents
-        print("num parents: %d" % self.num_parents)
-        print("offspring size: %d\n" % self.offspring_size)
+        self.print("num parents: %d" % self.num_parents)
+        self.print("offspring size: %d\n" % self.offspring_size)
+        self.start_time = None
+        self.limit_time = None
+        self.samples = 3
 
-    def increase_population_age(self, population):
+    @staticmethod
+    def increase_population_age(population):
         for individual in population:
             individual.increase_age()
-        self.generations_without_improve += 1
 
-    def replace(self, population, rank, next_generation, all_parents):
+    def replace(self, population, rank, next_generation):
         ages = [individual.age for individual in population]
         ages_dict = dict(zip(population, ages))
         ages_dict = sorted(ages_dict.items(), key=operator.itemgetter(1), reverse=False)
@@ -244,47 +252,48 @@ class GenerationalGA(GeneticAlgorithm):
 
         return final_survivors + next_generation
 
-    def maybe_validate_best(self, ranking, population, iters=3):
+    def maybe_validate_best(self, ranking, population):
         '''
         If the evaluation process of each gen is not deterministic, it's necessary
         to do a statical validation of the performance. To do this, this function
         makes a validation of the best gen of the generation in the population, evaluating it
-        a 'iters' number of times, and add a list with the results to a dictionary.
+        a 'self.samples' number of times, and add a list with the results to a dictionary.
 
         :param ranking:     The ranking of the population in the actual generation as a dict with
                             the name of each gen as a key, and a tuple (id, fitnees) as a value
         :param population:  Al the genes in the actual generation
-        :param iters:       The number of times to compute the metric of the best gen of the generation
-        :return:
+        :return: ranking with the population and its fitness
         '''
         if self.statistical_validation:
+            c = 0
             while population[ranking[0][0]].__repr__() not in self.best_fit_history.keys():
                 best = population[ranking[0][0]]
                 all_fits = [ranking[0][1]]
                 val_rank = dict(ranking)
-                all_fits += self.fitness_evaluator.eval_list([best for _ in range(1, iters)])
+                all_fits += self.fitness_evaluator.eval_list([best for _ in range(1, self.samples)])
                 self.best_fit_history[best.__repr__()] = all_fits
                 self.history_fitness[best.__repr__()] = np.mean(all_fits)
                 val_rank[ranking[0][0]] = np.mean(all_fits)
                 ranking = sorted(val_rank.items(), key=operator.itemgetter(1), reverse=self.maximize)
+                c += 1
+                if c > 100:
+                    print("Error in while!")
+                    raise AssertionError
         generational_best = population[ranking[0][0]]
         fit_best_of_gen = self.history_fitness[generational_best.__repr__()]
-        self.actualize_best(generational_best, fit_best_of_gen)
+        self.validate_best(generational_best, fit_best_of_gen)
         return ranking
 
-    def actualize_best(self, generational_best, generational_best_fitness):
-        if self.best_individual['winner'] is None:
+    def validate_best(self, generational_best, generational_best_fitness):
+        if self.best_individual['best_fit'] is None:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
-            self.generations_without_improve = 0
-        elif self.maximize and generational_best_fitness > self.best_individual['best_fit']:
+        elif self.maximize and generational_best_fitness >= self.best_individual['best_fit']:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
-            self.generations_without_improve = 0
-        elif (not self.maximize) and generational_best_fitness < self.best_individual['best_fit']:
+        elif (not self.maximize) and generational_best_fitness <= self.best_individual['best_fit']:
             self.best_individual['winner'] = generational_best
             self.best_individual['best_fit'] = generational_best_fitness
-            self.generations_without_improve = 0
 
     def maybe_precision_validation(self, ranking, population):
 
@@ -313,27 +322,42 @@ class GenerationalGA(GeneticAlgorithm):
             arg = np.argmax(best_generation_fitness).astype(np.int32)
         else:
             arg = np.min(best_generation_fitness).astype(np.int32)
-        best_precision_individual = best_generation_individuals[arg]
-        best_precision_individual_fit = best_generation_fitness[arg]
+        best_precision_individual = best_generation_individuals[int(arg)]
+        best_precision_individual_fit = best_generation_fitness[int(arg)]
 
-        self.actualize_best(best_precision_individual, best_precision_individual_fit)
-        return
+        self.validate_best(best_precision_individual, best_precision_individual_fit)
+        return best_generation_individuals
 
     def get_best(self):
         return self.best_individual['winner'], self.best_individual['best_fit']
 
-    def evolve(self, show=True):
+    def initialize_evolution(self):
         if self.generation == 0 or self.population == []:
             self.population = self.initial_population()
-            self.time = 0
-            print("Creating Initial population")
+            self.population[0] = self.chromosome
+            self.print("Creating Initial population")
         self.start_time = datetime.datetime.now()
-        self.limit_time = timedelta(hours=self.training_hours)
-        print("\nStart evolution process...\n")
+        self.limit_time = self.start_time + timedelta(hours=self.training_hours)
+        self.print("\nStart evolution process...\n")
+
+    def reset(self):
+        self.generation = 0
+        self.population = []
+        self.history = np.empty((self.pop_size, self.num_generations + 1))
+        self.history_fitness = {}
+        self.best_fit_history = {}
+        self.parent_selector.set_params(self.maximize, self.history_fitness)
+        self.best_individual = {'winner': self.chromosome, 'best_fit': None}
+        self.perfm_evo = [] if self.perfm_evo is not None else None
+        if self.make_precision_validation:
+            self.history_precision_fitness = {}
+            self.history_precision = np.empty((self.N_precision_individuals, self.num_generations + 1))
+
+    def evolve(self, show=True):
+        self.initialize_evolution()
         ti = time()
 
-        lim_generations = [self.num_generations, 10000][self.unlimit_evolve]
-        for self.generation in range(self.generation, lim_generations):
+        for self.generation in range(self.generation, self.num_generations):
             ranking = self.rank(self.population)
             # Make statical validation if is necessary
             ranking = self.maybe_validate_best(ranking, self.population)
@@ -343,87 +367,297 @@ class GenerationalGA(GeneticAlgorithm):
             # To show the evolution's progress
             if (self.num_generations <= 10 or (self.generation % int(self.num_generations / 10) == 0)) and show:
                 best, fit = self.get_best()
-                print("%d) best fit: %0.3f in batch time: %0.2f mins" %
-                      (self.generation + 1, fit, (time() - ti) / 60.))
-                print("Current winner:")
-                print(best)
+                self.print("%d) best fit: %0.3f in batch time: %0.2f mins" %
+                           (self.generation + 1, fit, (time() - ti) / 60.))
+                self.print("Current winner:")
+                self.print(best)
 
             # Save the generation
             self.maybe_save_genetic_algorithm(verbose=True)
 
-            # Conditions to break the evolution process
-            break_for_no_improvement = (self.generations_without_improve > self.generation / 2) and \
-                                       self.generation >= self.num_generations
-
-            self.time = datetime.datetime.now() - self.start_time
-            break_for_time = self.time > self.limit_time
-
-            if break_for_no_improvement or break_for_time:
+            if datetime.datetime.now() > self.limit_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
                 winner, best_fit = self.get_best()
-                if break_for_no_improvement:
-                    print("Breaking because there isn't improvement.")
-                    print("Current generation: %d" % int(self.generation))
-                    print("Generations without improve: %d" % self.generations_without_improve)
-                if break_for_time:
-                    print("Breaking because time limit was reached")
-                    print("Limit time: %0.4f hours" % self.training_hours)
-                    print("Elapsed time: %0.4f minutes" % (self.time.seconds/60))
-                print("Best fit until generation %d : %0.4f" % (self.generation, best_fit))
-                print(winner)
+                self.print("Best fit 'til generation %d : %0.4f" % (self.generation, best_fit))
+                self.print(winner)
                 break
-                return winner, best_fit, ranking
 
             next_generation, all_parents = self.parent_selector.next_gen(self.population, ranking, self.offspring_size)
-            self.population = self.replace(self.population, ranking, next_generation, all_parents)
+            self.population = self.replace(self.population, ranking, next_generation)
+
+            if self.perfm_evo is not None:
+                _, fit_test = self.finishing_evolution(show=False)
+                self.perfm_evo.append(fit_test)
 
         ranking = self.rank(self.population)
         ranking = self.maybe_validate_best(ranking, self.population)
         self.maybe_precision_validation(ranking, self.population)
         self.actualize_history(self.generation + 1, ranking)
 
+        winner, fit_test = self.finishing_evolution(show=show)
+        if self.perfm_evo is not None:
+            return winner, fit_test, self.perfm_evo
+        else:
+            return winner, fit_test, ranking
+
+    def finishing_evolution(self, show):
         winner, best_fit = self.get_best()
-        val_score, val_std, val_max, test_score, test_std, test_max = self.maybe_make_statistical_validation(winner)
-        self.best_individual['test'] = test_score
+        fit_test = self.maybe_make_statistical_validation(winner)
+        self.best_individual['test'] = fit_test
         self.maybe_save_genetic_algorithm()
-        self.time = datetime.datetime.now() - self.start_time
+
         if show:
-            print("Best Gen -> \n%s" % winner)
-            print("With Fitness (evo val): %0.4f" % best_fit)
-            print("Val results: mean %0.4f, std %0.4f, best %0.4f" % (val_score, val_std, val_max))
-            print("Test results: mean %0.4f, std %0.4f, best %0.4f" % (test_score, test_std, test_max))
-            print("Total elapsed time: %0.4f" % (self.time.seconds / 60))
+            self.print("Best Gen -> \n%s" % winner)
+            self.print("With Fitness (val): %0.4f and (test): %0.4f" % (best_fit, fit_test))
             self.show_history()
-        return winner, best_fit, ranking
+        return winner, fit_test
 
     def maybe_make_statistical_validation(self, winner):
         if not self.statistical_validation:
-            val_score, test_score = self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
-            return val_score, 0, val_score, test_score, 0, test_score
-        print("Making statistical validation")
-        winner_data_evo_val = self.best_fit_history[winner.__repr__()]
-        winner_data = self.fitness_evaluator.eval_list([winner for _ in winner_data_evo_val], test=True,
-                                                       precise_mode=True)
+            return self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
+        self.print("\nMaking statistical validation")
+        winner_data_test = self.fitness_evaluator.eval_list([winner for _ in range(self.samples)], test=True,
+                                                            precise_mode=True)
+        return np.mean(winner_data_test)
+        try:
+            winner_data_val = self.best_fit_history[winner.__repr__()]
+        except KeyError:
+            self.print("Winner is not in best_fit_history")
+            winner_data_val = [self.history_fitness[winner.__repr__()]]
+            winner_data_val += self.fitness_evaluator.eval_list([winner for _ in range(1, self.samples)])
 
-        benchmark_data = self.fitness_evaluator.eval_list([self.chromosome for _ in winner_data_evo_val],
-                                                          precise_mode=True, test=True)
-        winner_data_val = [data[0] for data in winner_data]
-        winner_data_test = [data[1] for data in winner_data]
-        benchmark_data_val = [data[0] for data in benchmark_data]
-        benchmark_data_test = [data[1] for data in benchmark_data]
+        if self.chromosome.__repr__() in self.best_fit_history.keys():
+            benchmark_data_val = self.best_fit_history[self.chromosome.__repr__()]
+        else:
+            benchmark_data_val = [self.history_fitness[self.chromosome.__repr__()]]
+            benchmark_data_val += self.fitness_evaluator.eval_list([self.chromosome for _ in range(1, self.samples)])
 
         # winner_data    = np.array(winner.cross_val(exclude_first=False, test=True))
         # benchmark_data = np.array(self.chromosome.cross_val(exclude_first=False, test=True))
-        print("Benchmark Val score: %0.4f. Winner Val score: %0.4f" % (
+        self.print("Benchmark Val score: %0.4f. Winner Val score: %0.4f" % (
             np.mean(benchmark_data_val), np.mean(winner_data_val)))
         t_value, p_value = stats.ttest_ind(winner_data_val, benchmark_data_val)
-        print("t = %0.4f, p = %0.4f" % (t_value, p_value))
+        self.print("t = %0.4f, p = %0.4f" % (t_value, p_value))
 
-        print("Benchmark Test score: %0.4f. Winner Test score: %0.4f" % (
+        winner_data_test = self.fitness_evaluator.eval_list([winner for _ in range(self.samples)], test=True,
+                                                            precise_mode=True)
+        benchmark_data_test = self.fitness_evaluator.eval_list([self.chromosome for _ in range(self.samples)],
+                                                               test=True, precise_mode=True)
+        self.print("Benchmark Test score: %0.4f. Winner Test score: %0.4f" % (
             np.mean(benchmark_data_test), np.mean(winner_data_test)))
         t_value, p_value = stats.ttest_ind(winner_data_test, benchmark_data_test)
-        print("t = %0.4f, p = %0.4f" % (t_value, p_value))
-        val_best = [np.min(winner_data_val), np,max(winner_data_val)][self.maximize]
-        test_best = [np.min(winner_data_test), np,max(winner_data_test)][self.maximize]
-        return np.mean(winner_data_val), np.std(winner_data_val), val_best, \
-               np.mean(winner_data_test), np.std(winner_data_test), test_best
+        self.print("t = %0.4f, p = %0.4f" % (t_value, p_value))
+        return np.mean(winner_data_test)
+
+
+class TwoLevelGA(GenerationalGA):
+
+    def __init__(self, chromosome, fitness, generations, population_first_level, population_second_level,
+                 training_hours, save_progress, maximize_fitness, statistical_validation, folder, start_level2,
+                 frequency_second_level=1, perform_evo=False):
+
+        self.population_1 = []
+        self.population_2 = []
+        self.scnd_level_freq = frequency_second_level
+        self.num_pop_level1 = population_first_level
+        self.num_pop_level2 = population_second_level
+        self.ti = None
+        self.start_level2 = start_level2
+
+        self.num_parents_level1 = self.num_pop_level1 // 4
+        self.num_parents_level2 = self.num_pop_level2 // 2
+
+        self.offspring_size_level1 = self.num_pop_level1 - self.num_parents_level1
+        self.offspring_size_level2 = self.num_pop_level2 - self.num_parents_level2
+
+        self.parent_selector_level1 = TournamentSelection(self.num_parents_level1)
+        self.parent_selector_level2 = TournamentSelection(self.num_parents_level2)
+
+        super().__init__(num_parents=self.num_parents_level1, chromosome=chromosome,
+                         parent_selector=self.parent_selector_level1, fitness=fitness,
+                         generations=generations, num_population=self.num_pop_level1,
+                         maximize_fitness=maximize_fitness, statistical_validation=statistical_validation,
+                         training_hours=training_hours, folder=folder, save_progress=save_progress,
+                         age_survivors_rate=0.0, precision_val=True, precision_individuals=self.num_pop_level2,
+                         perform_evo=perform_evo)
+
+        self.parent_selector_level1.set_params(self.maximize, self.history_fitness)
+        self.parent_selector_level2.set_params(self.maximize, self.history_precision_fitness)
+        self.print("Population size level one: %d" % self.num_pop_level1)
+        self.print("Population size level two: %d" % self.num_pop_level2)
+        self.print("Number of parents level one:", self.num_parents_level1)
+        self.print("Number of parents level two:", self.num_parents_level2)
+        self.print("Offspring size level one:", self.offspring_size_level1)
+        self.print("Offspring size level two:", self.offspring_size_level2)
+
+    def rank_precision(self, population):
+        fitness_result = {}
+        population_ids_to_eval = []
+        for i in range(len(population)):
+            gen = population[i].__repr__()
+            if gen not in self.history_precision_fitness.keys():
+                population_ids_to_eval.append(i)
+            else:
+                fitness_result[i] = self.history_precision_fitness[gen]
+        evaluated_fitness = self.fitness_evaluator.eval_list([population[id_to_eval] for
+                                                              id_to_eval in population_ids_to_eval], precise_mode=True)
+        for fit, i in zip(evaluated_fitness, population_ids_to_eval):
+            fitness_result[i] = fit
+            self.history_precision_fitness[population[i].__repr__()] = fit
+        return sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize)
+
+    @staticmethod
+    def actualize_given_history(generation, rank, history):
+        for i in range(len(rank)):
+            history[i, generation] = rank[i][1]
+
+    def evolve(self, show=True):
+        self.initialize_evolution()
+        self.population_1 = self.population
+        self.ti = time()
+
+        for self.generation in range(self.generation, self.num_generations):
+            # Evaluate the population, ranking it, actualize parameters and SAVE
+            ranking1 = self.evaluate_population(level=1)
+
+            if self.generation < self.start_level2:
+                next_generation_level1, all_parents_level1 = \
+                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
+                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+
+            elif self.generation == self.start_level2:
+                # Get the best of the first level
+                self.population_2 = [self.population_1[ranking1[i][0]] for i in range(self.num_pop_level2)]
+
+                # Evaluate the population, ranking it, actualize parameters and SAVE
+                self.evaluate_population(level=2)
+
+                next_generation_level1, all_parents_level1 = \
+                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
+                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+
+            elif self.generation % self.scnd_level_freq == 0:
+                # Evaluate the population, ranking it, actualize parameters and SAVE
+                ranking2 = self.evaluate_population(level=2)
+
+                offspring_level2, all_parents_level2 = self.parent_selector_level2.next_gen(self.population_2, ranking2,
+                                                                                            self.offspring_size_level2)
+
+                # Get the offspring of the first level
+                next_generation_level1, all_parents_level1 = \
+                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
+
+                # Get the N best of the first level
+                best_individuals_level1 = []
+                i = 0
+                c = 0
+                while len(best_individuals_level1) < self.offspring_size_level2:
+                    if self.population_1[ranking1[i][0]] not in self.population_2:
+                        best_individuals_level1.append(self.population_1[ranking1[i][0]])
+                    i += 1
+                    c += 1
+                    if c > 100:
+                        print("Error in while!")
+                        raise AssertionError
+
+                # Replace the N heirs of the second level in N random heirs of the first
+                next_generation_level1[0:self.offspring_size_level2] = offspring_level2
+
+                # Put the N best individuals from the first level in the offspring of the second
+                assert self.offspring_size_level2 == len(best_individuals_level1)
+                next_generation_level2 = best_individuals_level1
+
+                # To show the evolution's progress
+                self.show_progress(ranking1, ranking2)
+
+                # replace in each population
+                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+                self.population_2 = self.replace(self.population_2, ranking2, next_generation_level2)
+
+            else:
+                next_generation_level1, all_parents_level1 = \
+                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
+                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+
+                # Evaluate the population, ranking it, actualize parameters and SAVE
+                self.evaluate_population(level=2)
+
+            if datetime.datetime.now() > self.limit_time:
+                self.maybe_save_genetic_algorithm(verbose=True)
+                winner, best_fit = self.get_best()
+                self.print("Best fit 'til generation %d : %0.4f" % (self.generation, best_fit))
+                self.print(winner)
+                break
+
+            if self.perfm_evo is not None:
+                _, fit_test = self.finishing_evolution(show=False)
+                self.perfm_evo.append(fit_test)
+
+        self.generation += 1
+        ranking1 = self.evaluate_population(level=1)
+        ranking2 = self.evaluate_population(level=2)
+
+        # To show the evolution's progress
+        self.show_progress(ranking1, ranking2)
+
+        winner, fit_test = self.finishing_evolution(show=show)
+        if self.perfm_evo is not None:
+            return winner, fit_test, self.perfm_evo
+        else:
+            return winner, fit_test, ranking2
+
+    def show_progress(self, rank1, rank2):
+        best_id_level1, best_fit_level1 = rank1[0]
+        best_id_level2, best_fit_level2 = rank2[0]
+        self.print("\nGeneration (%d) in %0.2f minutes." % (self.generation, (time() - self.ti) / 60.))
+        self.print("Best first level fitness: %0.5f" % best_fit_level1)
+        self.print("Best second level fitness: %0.5f" % best_fit_level2)
+
+    def evaluate_population(self, level):
+        assert level in [1, 2]
+        if level == 1:
+            population = self.population_1
+            history_fitness = self.history_fitness
+            history = self.history
+        else:
+            population = self.population_2
+            history_fitness = self.history_precision_fitness
+            history = self.history_precision
+
+        local_ti = time()
+        self.print("\n%d) Ranking level %d... " % (self.generation, level), end="")
+        self.print("Models to train: %d ..." % self.count_untrained(population, history_fitness), end="")
+
+        if level == 1:
+            # Evaluate the models and ranking them
+            ranking = self.rank(population)
+            self.print("OK (in %0.2f minutes)" % ((time() - local_ti) / 60.0))
+            local_ti = time()
+            # Make statical validation if is necessary
+            ranking = self.maybe_validate_best(ranking, population)
+            self.print("Statistical validation in %0.2f minutes" % ((time() - local_ti) / 60.0))
+            self.increase_population_age(self.population_1)
+
+        else:
+            # Evaluate the models and ranking them
+            ranking = self.rank_precision(population)
+            self.print("OK (in %0.2f minutes)" % ((time() - local_ti) / 60.0))
+
+        # actualize the global best by
+        best_id, best_fit = ranking[0]
+        self.validate_best(population[best_id], best_fit)
+
+        # Actualize the historical matrix
+        self.actualize_given_history(self.generation, ranking, history)
+
+        # Save the generation
+        self.maybe_save_genetic_algorithm(verbose=True)
+        return ranking
+
+    @staticmethod
+    def count_untrained(population, history_fitness):
+        c = 0
+        for p in population:
+            if p.__repr__() not in history_fitness.keys():
+                c += 1
+        return c

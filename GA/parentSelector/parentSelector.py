@@ -8,12 +8,10 @@ class ParentSelector(object):
     def __init__(self, maximize=True, history={}):
         self.maximize = maximize
         self.history_fitness = history
-        self.ga = None
 
-    def set_genetic_algorithm(self, genetic_algorithm):
-        self.ga = genetic_algorithm
-        self.maximize = self.ga.maximize
-        self.history_fitness = self.ga.history_fitness
+    def set_params(self, maximize, history_fitness, **kwargs):
+        self.maximize = maximize
+        self.history_fitness = history_fitness
 
     def eval_individual(self, chromosome):
         gen = chromosome.__repr__()
@@ -78,9 +76,9 @@ class LinealOrderII(ParentSelector):
         super().__init__()
         self.num_parents = 1
 
-    def set_genetic_algorithm(self, genetic_algorithm):
-        super().set_genetic_algorithm(genetic_algorithm)
-        self.num_parents = self.ga.num_parents
+    def set_params(self, num_parents, **kwargs):
+        super().set_params(**kwargs)
+        self.num_parents = num_parents
 
     def get_one_offspring(self, population, rank, show_probs=False):
         ranking = dict(rank)

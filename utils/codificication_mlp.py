@@ -14,9 +14,9 @@ import matplotlib.pyplot as plt
 
 
 class Layer(object):
-    def __init__(self, units=128, activation='relu', dropout=0):
+    def __init__(self, units=128, activation='relu', dropout=0.0):
         self.units = units
-        #self.posible_Activations = ['relu', 'elu', 'prelu', 'leakyrelu']
+        # self.posible_Activations = ['relu', 'elu', 'prelu', 'leakyrelu']
         self.posible_activations = ['relu', 'sigmoid', 'tanh', 'elu', 'prelu', 'leakyreLu']
         assert activation in self.posible_activations
         self.activation = activation
@@ -69,7 +69,7 @@ class Layer(object):
     def random_layer(self):
         units = np.random.randint(0, self.units_lim)
         act = random.choice(self.posible_activations)
-        drop = np.random.rand()
+        drop = float(np.random.rand())
         return Layer(units, act, drop)
 
     def __repr__(self):
@@ -92,7 +92,7 @@ class Cromosome(object):
 
     def random_individual(self):
         n_layers = np.random.randint(0, self.max_layers)
-        layers = [Layer().random_layer() for i in range(n_layers)]
+        layers = [Layer().random_layer() for _ in range(n_layers)]
         return Cromosome(layers)
 
     @staticmethod
@@ -129,7 +129,6 @@ class Cromosome(object):
         elif np.random.rand() < self.layer_prob and len(self.layers) > 0:
             self.layers.pop()
         self.n_layers = len(self.layers)
-            
 
     def equals(self, other_cromosome):
         if self.n_layers != other_cromosome.n_layers:
@@ -154,8 +153,32 @@ class Cromosome(object):
     def cross_val(self, exclude_first=True, test=False):
         return self.evaluator.cross_val(self, exclude_first, test=test)
 
-    def fitness(self, test=False):
-        return self.evaluator.calc(self, test=test)
+    def decode(self, input_shape, num_classes=10, verb=False, **kwargs):
+
+        inp = Input(shape=input_shape)
+        x = Flatten()(inp)
+        for i in range(self.n_layers):
+            act = self.layers[i].activation
+            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
+                x = Dense(self.layers[i].units, activation=act)(x)
+            elif act == 'prelu':
+                x = Dense(self.layers[i].units)(x)
+                x = PReLU()(x)
+            else:
+                x = Dense(self.layers[i].units)(x)
+                x = LeakyReLU()(x)
+            x = Dropout(self.layers[i].dropout)(x)
+        x = Dense(num_classes, activation='softmax')(x)
+
+        model = Model(inputs=inp, outputs=x)
+        if verb:
+            model.summary()
+        model.compile(loss='categorical_crossentropy',
+                      optimizer=Adam(),
+                      metrics=['accuracy'])
+                      # options = self.run_opts)
+        return model
+
 
 class Fitness:
     __instance = None
@@ -217,7 +240,7 @@ class Fitness:
         try:
             ti = T.time()
             keras.backend.clear_session()
-            model = self.decode(chromosome)
+            model = chromosome.decode(num_classes=self.num_clases, input_shape=self.input_shape, verb=self.verb)
             h = model.fit(self.x_train, self.y_train,
                               batch_size=self.batch_size,
                               epochs=self.epochs,
@@ -242,32 +265,6 @@ class Fitness:
             self.show_result(h, 'loss')
         self.time += T.time() - ti
         return score[1]
-
-    def decode(self, chromosome):
-
-        inp = Input(shape=self.input_shape)
-        x = Flatten()(inp)
-        for i in range(chromosome.n_layers):
-            act = chromosome.layers[i].activation
-            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
-                x = Dense(chromosome.layers[i].units, activation=act)(x)
-            elif act == 'prelu':
-                x = Dense(chromosome.layers[i].units)(x)
-                x = PReLU()(x)
-            else:
-                x = Dense(chromosome.layers[i].units)(x)
-                x = LeakyReLU()(x)
-            x = Dropout(chromosome.layers[i].dropout)(x)
-        x = Dense(self.num_clases, activation='softmax')(x)
-
-        model = Model(inputs=inp, outputs=x)
-        if self.verb:
-            model.summary()
-        model.compile(loss='categorical_crossentropy',
-                      optimizer=Adam(),
-                      metrics=['accuracy'])
-                      #options = self.run_opts)
-        return model
 
     def show_result(self, history, metric='acc'):
         epochs = np.linspace(0, len(history.history['acc']) - 1, len(history.history['acc']))

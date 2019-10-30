@@ -1,9 +1,7 @@
 import argparse
-from ast import literal_eval
 from utils.utils import verify_free_gpu_memory
-from utils.codification_cnn import CNNLayer, NNLayer, ChromosomeCNN, FitnessCNN
 from utils.codifications import Chromosome, Fitness
-from time import sleep
+from time import sleep, time
 import os
 
 
@@ -24,31 +22,8 @@ parser.add_argument('-pm', '--precise_mode', type=bool, default=False,
                          " of the fitness")
 
 args = vars(parser.parse_args())
+abs_ti = time()
 
-'''
-def get_chromosome_from_file(filename):
-    cnn_layers = []
-    nn_layers = []
-    with open(filename, 'r') as f:
-        for line in f:
-            params = line.split('|')            
-            if 'CNN' == params[0]:
-                filters = int(params[1].split(':')[1])
-                kernel = literal_eval(params[2].split(':')[1])
-                activation = params[3].split(':')[1]
-                dropout = float(params[4].split(':')[1])
-                maxpool = bool(int(params[5].split(':')[1]))
-                cnn_layers.append(CNNLayer(filters, kernel, activation, dropout, maxpool))
-            if 'NN' == params[0]:
-                units = int(params[1].split(':')[1])
-                activation = params[2].split(':')[1]
-                dropout = float(params[3].split(':')[1])
-                nn_layers.append(NNLayer(units, activation, dropout))
-    return ChromosomeCNN(cnn_layers, nn_layers)
-
-chromosome = get_chromosome_from_file(args['gen_file'])
-fitness = FitnessCNN.load(args['fitness_file'])
-'''
 chromosome = Chromosome.load(args['gen_file'])
 print(chromosome)
 fitness = Fitness.load(args['fitness_file'])
@@ -63,15 +38,26 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % gpu_id
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+training_time = time()
 score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
                      fp=args['float_precision'], precise_mode=args['precise_mode'])
+training_time = (time() - training_time) / 60.
 print()
-show_score = "Val score: %0.4f" % score[0]
-with open("%s_score" % args['gen_file'], 'w') as f:
-    f.write("\nVal_score: %0.6f" % score[0])
-    if args['test']:
-        f.write("\nTest_score: %0.6f" % score[1])
-        show_score += ", Test score: %0.4f" % score[1]
-print(show_score)
+with open("%s_score" % args['gen_file'], 'a') as f:
+    f.write("\nScore: %0.6f" % score)
+
+abs_ti = (time() - abs_ti) / 60.
+work_directory = os.path.split(args['gen_file'])[0]
+record_file = os.path.join(work_directory, 'RECORD')
+with open(record_file, 'a') as f:
+    f.write("-" * 40 + "\n")
+    f.write(f"{chromosome.__repr__()}\n")
+    if abs_ti > 10:
+        f.write("Taking too much time")
+    f.write(f"Precision:\t{args['precise_mode']}\n")
+    f.write(f"Score:\t\t{score.__format__('2.4')}\n")
+    f.write(f"Absolute time:\t{abs_ti.__format__('2.2')} min\n")
+    f.write(f"Training time:\t{training_time.__format__('2.2')} min\n\n")
+print("Score: %0.4f" % score)
 
 

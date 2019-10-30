@@ -1,9 +1,0 @@
-CNN|F:91|K:(7,7)|A:prelu|D:0.048|M:1
-CNN|F:70|K:(7,7)|A:relu|D:0.446|M:0
-CNN|F:73|K:(7,7)|A:relu|D:0.176|M:0
-NN|U:634|A:elu|D:0.102
-1
-01
-
-With Fitness (val): 0.0050 and (test): 0.0090
-

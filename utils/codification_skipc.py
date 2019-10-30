@@ -1,9 +1,8 @@
-import keras
 
 import numpy as np
 from keras import Input, Model
-from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout,SpatialDropout2D
-from keras.layers import MaxPooling2D, Flatten, Dense, BatchNormalization
+from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization, \
+    GlobalAveragePooling2D
 from keras.optimizers import Adam
 from keras.layers.merge import concatenate
 import os
@@ -18,34 +17,33 @@ class ChromosomeSkip(ChromosomeCNN):
     allow_maxpool = True
     union_operations = ['concat', 'add']
 
-    def __init__(self, cnn_layers=None, nn_layers=None, connections=None, fitness=None):
-        super().__init__(cnn_layers=cnn_layers, nn_layers=nn_layers, fitness=fitness)
+    def __init__(self, cnn_layers=None, nn_layers=None, connections=None, chromosome_cnn=None):
+        if chromosome_cnn is not None:
+            super().__init__(cnn_layers=chromosome_cnn.cnn_layers, nn_layers=chromosome_cnn.nn_layers)
+        else:
+            super().__init__(cnn_layers=cnn_layers, nn_layers=nn_layers)
         self.connections = connections
         if not isinstance(self.connections, Connections):
             print("Problems with type", type(self.connections))
             print(self.connections)
 
-    @staticmethod
-    def random_individual():
-        chromosome_cnn = ChromosomeCNN.random_individual()
+    @classmethod
+    def random_individual(cls):
+        chromosome_cnn = super().random_individual()
         n_blocks = len(chromosome_cnn.cnn_layers)
         new_connections = Connections.random_connections(n_blocks)
-        return ChromosomeSkip(cnn_layers=chromosome_cnn.cnn_layers,
-                              nn_layers=chromosome_cnn.nn_layers,
-                              connections=new_connections)
+        return ChromosomeSkip(connections=new_connections, chromosome_cnn=chromosome_cnn)
 
     def simple_individual(self):
         chromosome_cnn = super().simple_individual()
         n_blocks = len(chromosome_cnn.cnn_layers)
         new_connections = Connections.random_connections(n_blocks)
-        return ChromosomeSkip(chromosome_cnn.cnn_layers, chromosome_cnn.nn_layers, new_connections)
+        return ChromosomeSkip(connections=new_connections, chromosome_cnn=chromosome_cnn)
 
     def cross(self, other_chromosome):
         new_chromosome = super().cross(other_chromosome)
         new_connections = self.connections.cross(other_chromosome.connections, len(new_chromosome.cnn_layers))
-        return ChromosomeSkip(cnn_layers=new_chromosome.cnn_layers,
-                              nn_layers=new_chromosome.nn_layers,
-                              connections=new_connections)
+        return ChromosomeSkip(connections=new_connections, chromosome_cnn=new_chromosome)
 
     def mutate_layers(self, this_layers, type_):
         for i in range(len(this_layers)):
@@ -76,15 +74,88 @@ class ChromosomeSkip(ChromosomeCNN):
     def __repr__(self):
         return super().__repr__() + self.connections.__repr__()
 
-    def fitness(self, test=False):
-        return self.evaluator.calc(self, test=test)
-
     def self_copy(self):
         chromosome_cnn = super().self_copy()
         new_connections = self.connections.self_copy()
-        return ChromosomeSkip(cnn_layers=chromosome_cnn.cnn_layers,
-                              nn_layers=chromosome_cnn.nn_layers,
-                              connections=new_connections)
+        return ChromosomeSkip(connections=new_connections, chromosome_cnn=chromosome_cnn)
+
+    '''
+    @staticmethod
+    def decode_layer(layer, inp_, allow_maxpool=True, fp=32):
+        act_ = layer.activation
+        filters = layer.filters
+        k_size = layer.k_size
+        if act_ in ['relu', 'sigmoid', 'tanh', 'elu']:
+            x_ = Conv2D(filters, k_size, activation=act_, padding='same')(inp_)
+        elif act_ == 'prelu':
+            x_ = Conv2D(filters, k_size, padding='same')(inp_)
+            x_ = PReLU()(x_)
+        else:
+            x_ = Conv2D(filters, k_size, padding='same')(inp_)
+            x_ = LeakyReLU()(x_)
+
+        if fp == 32:
+            x_ = BatchNormalization()(x_)
+            if layer.maxpool and allow_maxpool:
+                print("MAXPOOL")
+                x_ = MaxPooling2D()(x_)
+            x_ = Dropout(layer.dropout)(x_)
+        else:
+            x_ = BatchNormalizationF16()(x_)
+            if layer.maxpool and allow_maxpool:
+                print("MAXPOOL")
+                x_ = MaxPooling2D()(x_)
+            x_ = Dropout(layer.dropout)(x_)
+
+        return x_
+    '''
+    def get_cell(self, x_, allow_maxpool=True, fp=32):
+        connections = self.connections.matrix
+        cnn_layers = self.cnn_layers
+
+        layers = []
+        if len(cnn_layers) > 0:
+            layers.append(self.decode_layer(cnn_layers[0], x_, allow_maxpool=allow_maxpool, fp=fp))
+
+        for block in range(connections.shape[0]):
+            input_connections = []
+            for input_layer in range(connections.shape[0]):
+                if connections[block, input_layer] == 1:
+                    input_connections.append(layers[input_layer])
+
+            if len(input_connections) > 1:
+                shapes = [l._shape_as_list()[1] for l in input_connections]
+                min_shape = np.min(shapes)
+                for k in range(len(input_connections)):
+                    maxpool_size = int(shapes[k] / min_shape)
+                    if maxpool_size > 1 and allow_maxpool:
+                        input_connections[k] = MaxPooling2D(maxpool_size)(input_connections[k])
+                x_ = concatenate(input_connections)
+            else:
+                x_ = input_connections[0]
+            layers.append(self.decode_layer(cnn_layers[block + 1], x_, allow_maxpool=allow_maxpool, fp=fp))
+        return layers
+
+    def decode(self, input_shape, num_classes=10, verb=False, fp=32, **kwargs):
+        inp = Input(input_shape)
+        x = BatchNormalization()(inp)
+        layers = self.get_cell(x, allow_maxpool=True, fp=fp)
+
+        if len(layers) == 0:
+            x = GlobalAveragePooling2D()(inp)
+            # x = Flatten()(inp)
+        else:
+            x = GlobalAveragePooling2D()(layers[-1])
+            # x = Flatten()(layers[-1])
+
+        x = self.get_nn_layers(x, num_classes=num_classes)
+        model = Model(inputs=inp, outputs=x)
+        if verb:
+            model.summary()
+        model.compile(loss='categorical_crossentropy',
+                      optimizer=Adam(),
+                      metrics=['accuracy'])
+        return model
 
 
 class Connections:
@@ -92,6 +163,9 @@ class Connections:
     def __init__(self, matrix):
         self.matrix = matrix.astype(np.int32)
 
+    # TODO: Make a cross function that overlap the matrices (with zero padding at the end of the smaller)
+    # and the, maintain the common values, if they are both 0s or 1s.
+    # Finally, the values not overlapped, which are different between the matrices, are chosen randomly
     def cross(self, another_connections, n_blocks):
         # Combine the rows between matrices, that is, keep the input connections
         # of each block
@@ -202,131 +276,3 @@ class Connections:
                 random_index = np.random.randint(j, matrix.shape[0])
                 matrix[random_index, j] = 1
         return matrix
-
-
-class FitnessSkip(FitnessCNN):
-    maxpool_overlap = False
-    spatial_dropout = False
-
-    def decode(self, chromosome, lr=0.001, fp=32, dropout_voting=False):
-        connections = chromosome.connections.matrix
-        cnn_layers = chromosome.cnn_layers
-
-        if self.maxpool_overlap:
-            ps = 3
-            st = 2
-        else:
-            ps = 2
-            st = 2
-
-        def decode_layer(layer, inp_):
-            act_ = layer.activation
-            filters = layer.filters
-            k_size = layer.k_size
-            if act_ in ['relu', 'sigmoid', 'tanh', 'elu']:
-                x_ = Conv2D(filters, k_size, activation=act_, padding='same')(inp_)
-            elif act_ == 'prelu':
-                x_ = Conv2D(filters, k_size, padding='same')(inp_)
-                x_ = PReLU()(x_)
-            else:
-                x_ = Conv2D(filters, k_size, padding='same')(inp_)
-                x_ = LeakyReLU()(x_)
-
-            if fp == 32:
-                x_ = BatchNormalization()(x_)
-                if layer.maxpool:
-                    x_ = MaxPooling2D(pool_size=ps, strides=st)(x_)
-            else:
-                x_ = BatchNormalizationF16()(x_)
-                if layer.maxpool:
-                    x_ = MaxPooling2D(pool_size=ps, strides=st)(x_)
-            if self.spatial_dropout:
-                x_ = SpatialDropout2D(layer.dropout)(x_)
-            else:
-                if dropout_voting:
-                    x_ = Dropout_voting(layer.dropout)(x_)
-                else:
-                    x_ = Dropout(layer.dropout)(x_)
-
-            return x_
-
-        def count_mp(s1, s2):
-            n = 0
-            while True:
-                if s1 == s2:
-                    return n
-                if FitnessSkip.maxpool_overlap:
-                    s1 = int((s1 + 1) / 2 - 1)
-                else:
-                    s1 = int(s1/2)
-                n += 1
-
-        inp = Input(shape=self.input_shape)
-        x = BatchNormalization()(inp)
-
-        layers = []
-        if len(cnn_layers) > 0:
-            layers.append(decode_layer(cnn_layers[0], x))
-
-        for block in range(connections.shape[0]):
-            input_connections = []
-            for input_layer in range(connections.shape[0]):
-                if connections[block, input_layer] == 1:
-                    input_connections.append(layers[input_layer])
-
-            if len(input_connections) > 1:
-                shapes = [l._shape_as_list()[1] for l in input_connections]
-                min_shape = np.min(shapes)
-                for k in range(len(input_connections)):
-                    maxpool_size = count_mp(shapes[k], min_shape) + 1
-                    while maxpool_size > 1:
-                        input_connections[k] = MaxPooling2D(pool_size=ps, strides=st)(input_connections[k])
-                        maxpool_size -= 1
-                x = concatenate(input_connections)
-            else:
-                x = input_connections[0]
-            layers.append(decode_layer(cnn_layers[block + 1], x))
-
-        if len(layers) == 0:
-            x = Flatten()(x)
-        else:
-            x = Flatten()(layers[-1])
-
-        for i in range(chromosome.n_nn):
-            act = chromosome.nn_layers[i].activation
-            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
-                x = Dense(chromosome.nn_layers[i].units, activation=act)(x)
-            elif act == 'prelu':
-                x = Dense(chromosome.nn_layers[i].units)(x)
-                x = PReLU()(x)
-            else:
-                x = Dense(chromosome.nn_layers[i].units)(x)
-                x = LeakyReLU()(x)
-            x = BatchNormalization()(x)
-            if dropout_voting:
-                x = Dropout_voting(chromosome.nn_layers[i].dropout)(x)
-            else:
-                x = Dropout(chromosome.nn_layers[i].dropout)(x)
-        x = Dense(self.num_clases, activation='softmax')(x)
-
-        model = Model(inputs=inp, outputs=x)
-        if self.verb:
-            model.summary()
-        model.compile(loss='categorical_crossentropy',
-                      optimizer=Adam(lr),
-                      metrics=['accuracy'])
-        return model
-    
-    
-class Dropout_voting(Dropout):
-    def call(self, inputs, training=None):
-        if 0. < self.rate < 1.:
-            noise_shape = self._get_noise_shape(inputs)
-
-            def dropped_inputs():
-                return keras.backend.dropout(inputs, self.rate, noise_shape,
-                                 seed=self.seed)
-            return keras.backend.in_train_phase(dropped_inputs, dropped_inputs,
-                                    training=training)
-        return inputs
-

@@ -1,29 +1,29 @@
 from __future__ import print_function
 
+import os
 import random
-from time import time
+import shlex
+import subprocess
+import threading
 from time import sleep
+from time import time
 
 import keras
-
 import numpy as np
 from keras import Input, Model
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.models import load_model
-from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, SpatialDropout2D, MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.optimizers import Adam
 from matplotlib import pyplot as plt
 from tensorflow.python.framework.errors_impl import ResourceExhaustedError
-import os
+
+from utils.BN16 import BatchNormalizationF16
+from utils.codifications import Layer, Chromosome, Fitness
+from utils.lr_finder import LRFinder
+from utils.utils import smooth_labels, WarmUpCosineDecayScheduler, EarlyStopByTimeAndAcc, CLRScheduler
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
-from utils.codifications import Layer, Chromosome, Fitness
-from utils.utils import smooth_labels, WarmUpCosineDecayScheduler, CLRScheduler
-from utils.BN16 import BatchNormalizationF16
-from utils.lr_finder import LRFinder
-import shlex, subprocess
-import threading
 
 
 class NNLayer(Layer):
@@ -176,8 +176,8 @@ class ChromosomeCNN(Chromosome):
     grow_prob = 0.25
     decrease_prob = 0.25
 
-    def __init__(self, cnn_layers=None, nn_layers=None, fitness=None):
-        super().__init__(fitness)
+    def __init__(self, cnn_layers=None, nn_layers=None):
+        super().__init__()
         self.cnn_layers = cnn_layers
         self.nn_layers = nn_layers
         if cnn_layers is None:
@@ -190,30 +190,27 @@ class ChromosomeCNN(Chromosome):
         self.n_cnn = len(cnn_layers)
         self.n_nn = len(nn_layers)
 
-    @staticmethod
-    def random_individual():
-        max_init_cnn_layers = int(0.4 * ChromosomeCNN.max_layers['CNN'] + 1)
-        max_init_nn_layers = int(0.4 * ChromosomeCNN.max_layers['NN'] + 1)
+    @classmethod
+    def random_individual(cls):
+        max_init_cnn_layers = int(0.4 * cls.max_layers['CNN'] + 1)
+        max_init_nn_layers = int(0.4 * cls.max_layers['NN'] + 1)
         n_cnn = np.random.randint(0, max_init_cnn_layers)
         n_nn = np.random.randint(0, max_init_nn_layers)
-        cnn_layers = [ChromosomeCNN.layers_types['CNN'].random_layer() for _ in range(n_cnn)]
-        nn_layers = [ChromosomeCNN.layers_types['NN'].random_layer() for _ in range(n_nn)]
-        return ChromosomeCNN(cnn_layers, nn_layers, None)
+        cnn_layers = [cls.layers_types['CNN'].random_layer() for _ in range(n_cnn)]
+        nn_layers = [cls.layers_types['NN'].random_layer() for _ in range(n_nn)]
+        return ChromosomeCNN(cnn_layers=cnn_layers, nn_layers=nn_layers)
 
     def simple_individual(self):
-        return ChromosomeCNN([], [], self.evaluator)
+        return ChromosomeCNN(cnn_layers=[], nn_layers=[])
 
     def cross(self, other_chromosome):
         new_cnn_layers = self.cross_layers(self.cnn_layers, other_chromosome.cnn_layers)
         new_nn_layers = self.cross_layers(self.nn_layers, other_chromosome.nn_layers)
-        new_chromosome = ChromosomeCNN(new_cnn_layers, new_nn_layers, self.evaluator)
-        return new_chromosome
+        return ChromosomeCNN(cnn_layers=new_cnn_layers, nn_layers=new_nn_layers)
 
     @staticmethod
     def cross_layers(this_layers, other_layers):
-        p = np.random.rand()
         p = 0.8
-
         new_layers = [l.self_copy() for l in random.choice([this_layers, other_layers])]
 
         for i in range(min(len(other_layers), len(this_layers))):
@@ -270,24 +267,179 @@ class ChromosomeCNN(Chromosome):
             rep += "%s\n" % l
         return rep
 
-    def fitness(self, test=False):
-        return self.evaluator.calc(self, test=test)
-
     def self_copy(self):
         new_cnn_layers = [layer.self_copy() for layer in self.cnn_layers]
         new_nn_layers = [layer.self_copy() for layer in self.nn_layers]
-        return ChromosomeCNN(new_cnn_layers, new_nn_layers, self.evaluator)
+        return ChromosomeCNN(cnn_layers=new_cnn_layers, nn_layers=new_nn_layers)
+
+    @staticmethod
+    def get_cnn_layer(inp_, activation, filters, k_size):
+        if activation in ['relu', 'sigmoid', 'tanh', 'elu']:
+            x_ = Conv2D(filters, k_size, activation=activation, padding='same')(inp_)
+        elif activation == 'prelu':
+            x_ = Conv2D(filters, k_size, padding='same')(inp_)
+            x_ = PReLU()(x_)
+        else:
+            x_ = Conv2D(filters, k_size, padding='same')(inp_)
+            x_ = LeakyReLU()(x_)
+        return x_
+
+    @staticmethod
+    def get_BN_MP_DROP_block(inp_, maxpool, dropout, fp=32):
+        if fp == 32:
+            x_ = BatchNormalization()(inp_)
+            if maxpool:
+                print("MAXPOOL")
+                x_ = MaxPooling2D()(x_)
+            x_ = Dropout(dropout)(x_)
+        else:
+            x_ = BatchNormalizationF16()(inp_)
+            if maxpool:
+                print("MAXPOOL")
+                x_ = MaxPooling2D()(x_)
+            x_ = Dropout(dropout)(x_)
+        return x_
+
+    @staticmethod
+    def decode_layer(layer, inp_, allow_maxpool=False, fp=32):
+        act_ = layer.activation
+        filters_ = layer.filters
+        k_size = layer.k_size
+        maxpool = layer.maxpool and allow_maxpool
+        dropout = layer.dropout
+        x_ = ChromosomeCNN.get_cnn_layer(inp_=inp_, activation=act_, filters=filters_, k_size=k_size)
+        x_ = ChromosomeCNN.get_BN_MP_DROP_block(inp_=x_, maxpool=maxpool, dropout=dropout, fp=fp)
+        return x_
+
+    def get_nn_layers(self, x_, num_classes):
+        for i in range(self.n_nn):
+            act = self.nn_layers[i].activation
+            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
+                x_ = Dense(self.nn_layers[i].units, activation=act)(x_)
+            elif act == 'prelu':
+                x_ = Dense(self.nn_layers[i].units)(x_)
+                x_ = PReLU()(x_)
+            else:
+                x_ = Dense(self.nn_layers[i].units)(x_)
+                x_ = LeakyReLU()(x_)
+            x_ = BatchNormalization()(x_)
+            x_ = Dropout(self.nn_layers[i].dropout)(x_)
+        x_ = Dense(num_classes, activation='softmax')(x_)
+        return x_
+
+    def decode(self, input_shape, num_classes=10, verb=False, fp=32, **kwargs):
+        inp = Input(shape=input_shape)
+        x = inp
+
+        for i in range(self.n_cnn):
+            act = self.cnn_layers[i].activation
+            filters = self.cnn_layers[i].filters
+            ksize = self.cnn_layers[i].k_size
+            maxpool = self.cnn_layers[i].maxpool
+            dropout = self.cnn_layers[i].dropout
+            x = self.get_cnn_layer(x, act, filters, ksize)
+            x = self.get_BN_MP_DROP_block(x, maxpool, dropout)
+
+        x = Flatten()(x)
+        x = self.get_nn_layers(x, num_classes=num_classes)
+        model = Model(inputs=inp, outputs=x)
+        if verb:
+            model.summary()
+        model.compile(loss='categorical_crossentropy',
+                      optimizer=Adam(0.001),
+                      metrics=['accuracy'])
+        return model
+        '''    
+            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
+                x = Conv2D(filters, ksize, activation=act, padding='same')(x)
+            elif act == 'prelu':
+                x = Conv2D(filters, ksize, padding='same')(x)
+                x = PReLU()(x)
+            else:
+                x = Conv2D(filters, ksize, padding='same')(x)
+                x = LeakyReLU()(x)
+
+            if fp in [320, 160]:
+                # fp = 320 to not use BN with FP32 and fp = 160 to not use BN with FP16
+                pass
+            elif fp == 321:
+                x = BatchNormalization()(x)
+                x = Dropout(self.cnn_layers[i].dropout)(x)
+                if self.cnn_layers[i].maxpool:
+                    x = MaxPooling2D()(x)
+
+            elif fp == 32:
+                x = BatchNormalization()(x)
+                if self.cnn_layers[i].maxpool:
+                    x = MaxPooling2D()(x)
+                x = Dropout(self.cnn_layers[i].dropout)(x)
+
+            elif fp == 322:
+                if self.cnn_layers[i].maxpool:
+                    x = MaxPooling2D()(x)
+                x = BatchNormalization()(x)
+                x = Dropout(self.cnn_layers[i].dropout)(x)
+
+            else:
+                x = BatchNormalizationF16()(x)
+
+        x = Flatten()(x)
+
+        for i in range(self.n_nn):
+            act = self.nn_layers[i].activation
+            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
+                x = Dense(self.nn_layers[i].units, activation=act)(x)
+            elif act == 'prelu':
+                x = Dense(self.nn_layers[i].units)(x)
+                x = PReLU()(x)
+            else:
+                x = Dense(self.nn_layers[i].units)(x)
+                x = LeakyReLU()(x)
+            x = Dropout(self.nn_layers[i].dropout)(x)
+        x = Dense(num_classes, activation='softmax')(x)
+
+        model = Model(inputs=inp, outputs=x)
+        if verb:
+            model.summary()
+        model.compile(loss='categorical_crossentropy',
+                      optimizer=Adam(0.001),
+                      metrics=['accuracy'])
+        return model
+        '''
 
 
 class FitnessCNN(Fitness):
 
-    def set_params(self, data, batch_size=128, epochs=100, verbose=1,
-                  base_lr=0.001, smooth_label=False, find_lr=False, precise_epochs=None):
+    def __init__(self):
+        super().__init__()
+        self.smooth = None
+        self.warmup_epochs = None
+        self.learning_rate_base = None
+        self.seconds = None
+        self.batch_size = None
+        self.epochs = None
+        self.early_stop = None
+        self.reduce_plateu = None
+        self.verb = None
+        self.find_lr = None
+        self.precise_epochs = None
+        (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = [(None, None)] * 3
+        self.input_shape = None
+        self.num_clases = None
+        self.cosine_decay = None
+        self.y_train = None
+
+    def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
+                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False,
+                   precise_epochs=None):
         self.smooth = smooth_label
+        self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
         self.seconds = 0
         self.batch_size = batch_size
         self.epochs = epochs
+        self.early_stop = early_stop
+        self.reduce_plateu = reduce_plateau
         self.verb = verbose
         self.find_lr = find_lr
         self.precise_epochs = precise_epochs
@@ -295,6 +447,8 @@ class FitnessCNN(Fitness):
 
         self.input_shape = self.x_train[0].shape
         self.num_clases = self.y_train.shape[1]
+        self.cosine_decay = cosine_decay
+        # self.set_callbacks = self.set_callbacks()
         if self.smooth > 0:
             self.y_train = smooth_labels(self.y_train, self.smooth)
         return self
@@ -305,18 +459,38 @@ class FitnessCNN(Fitness):
         callbacks = []
         # Create the Learning rate scheduler.
         total_steps = int(epochs * self.y_train.shape[0] / self.batch_size)
-
-        clr_schedule = CLRScheduler(max_lr=self.learning_rate_base, min_lr=0.00001,
+        warm_up_steps = int(self.warmup_epochs * self.y_train.shape[0] / self.batch_size)
+        base_steps = total_steps * (not self.cosine_decay)
+        if self.cosine_decay:
+            schedule = WarmUpCosineDecayScheduler(learning_rate_base=self.learning_rate_base,
+                                                  total_steps=total_steps,
+                                                  warmup_learning_rate=0.0,
+                                                  warmup_steps=warm_up_steps,
+                                                  hold_base_rate_steps=base_steps)
+        else:
+            schedule = CLRScheduler(max_lr=self.learning_rate_base,
+                                    min_lr=0.00002,
                                     total_steps=total_steps)
-        callbacks.append(clr_schedule)
-
-        # This line is not executed
-        if file_model is not None and False:
-            #checkpoint_last = ModelCheckpoint(file_model)
-            #checkpoint_loss = ModelCheckpoint(file_model, monitor='val_loss', save_best_only=True)
+        callbacks.append(schedule)
+        min_val_acc = (1. / self.num_clases) + 0.1
+        early_stop = EarlyStopByTimeAndAcc(limit_time=90,
+                                           baseline=min_val_acc,
+                                           patience=5)
+        callbacks.append(early_stop)
+        # callbacks.append(EarlyStopping(monitor='val_acc', patience=epochs//5, baseline=min_val_acc))
+        if file_model is not None:
+            # checkpoint_last = ModelCheckpoint(file_model)
+            # checkpoint_loss = ModelCheckpoint(file_model, monitor='val_loss', save_best_only=True)
             checkpoint_acc = ModelCheckpoint(file_model, monitor='val_acc', save_best_only=True)
             callbacks.append(checkpoint_acc)
 
+        if self.early_stop > 0 and keras.__version__ == '2.2.4':
+            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop, restore_best_weights=True))
+        elif self.early_stop > 0:
+            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop))
+        if self.reduce_plateu:
+            callbacks.append(ReduceLROnPlateau(monitor='val_acc', factor=0.2,
+                                               patience=5, verbose=self.verb))
         return callbacks
 
     def get_params(self, precise_mode=False):
@@ -332,6 +506,7 @@ class FitnessCNN(Fitness):
         return lr
 
     def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
+        # self.verb = True
         epochs = self.get_params(precise_mode)
         print("Training...", end=" ")
         if fp == 16 or fp == 160:
@@ -343,14 +518,14 @@ class FitnessCNN(Fitness):
             ti = time()
             keras.backend.clear_session()
             callbacks = self.set_callbacks(file_model=file_model, epochs=epochs)
-            model = self.decode(chromosome, fp=fp)
-
+            model = chromosome.decode(num_classes=self.num_clases, input_shape=self.input_shape,
+                                      verb=self.verb, fp=fp)
             if self.find_lr:
-                model.save('./temp.hdf5')
+                model.save('temp.hdf5')
                 lr = self.get_good_lr(model, file_model)
                 self.learning_rate_base = lr
                 # Set the learning rate
-                model = load_model('./temp.hdf5', {'BatchNormalizationF16': BatchNormalizationF16})
+                model = load_model('temp.hdf5', {'BatchNormalizationF16': BatchNormalizationF16})
                 keras.backend.set_value(model.optimizer.lr, lr)
                 print("Learning Rate founded: %0.5f" % lr)
 
@@ -361,14 +536,13 @@ class FitnessCNN(Fitness):
                           validation_data=(self.x_val, self.y_val),
                           callbacks=callbacks)
 
-            #val_score = 1 - np.mean(h.history['val_acc'][-3::])
-            val_score = 1 - np.mean([h.history['val_acc'][-1], np.max(h.history['val_acc'])])
             if test:
-                #model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
-                test_score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
-                score = (val_score, test_score)
+                model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
+                # model = load_model(file_model)
+
+                score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
-                score = (val_score, -1)
+                score = 1 - np.max(h.history['val_acc'])
         except Exception as e:
             score = [1 / self.num_clases, 1. / self.num_clases]
             if isinstance(e, ResourceExhaustedError):
@@ -378,86 +552,17 @@ class FitnessCNN(Fitness):
                 print(e, "\n")
             keras.backend.clear_session()
             sleep(5)
-            return 1 - score[1], 1 - score[1]
+            return 1 - score[1]
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
+            score_val = 1 - np.max(h.history['val_acc'])
             type_model = ['last', 'best_acc'][test]
-            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (val_score, type_model, score_test))
+            print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val, type_model, score_test))
             self.show_result(h, 'acc')
             self.show_result(h, 'loss')
         self.seconds += time() - ti
-        print("Val acc %0.4f, Test acc %0.4f. In %0.1f min\n" %
-              (score[0], score[1], (time() - ti) / 60))
+        print("%0.4f in %0.1f min\n" % (score, (time() - ti) / 60))
         return score
-
-    def decode(self, chromosome, fp=32):
-
-        inp = Input(shape=self.input_shape)
-        x = BatchNormalization()(inp)
-
-        for i in range(chromosome.n_cnn):
-            act = chromosome.cnn_layers[i].activation
-            filters = chromosome.cnn_layers[i].filters
-            ksize = chromosome.cnn_layers[i].k_size
-            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
-                x = Conv2D(filters, ksize, activation=act, padding='same')(x)
-            elif act == 'prelu':
-                x = Conv2D(filters, ksize, padding='same')(x)
-                x = PReLU()(x)
-            else:
-                x = Conv2D(filters, ksize, padding='same')(x)
-                x = LeakyReLU()(x)
-                
-            if fp in [320, 160]:
-                # fp = 320 to not use BN with FP32 and fp = 160 to not use BN with FP16
-                pass
-            elif fp == 321:
-                x = BatchNormalization()(x)
-                x = SpatialDropout2D(chromosome.cnn_layers[i].dropout)(x)
-                #x = Dropout(chromosome.cnn_layers[i].dropout)(x)
-                if chromosome.cnn_layers[i].maxpool:
-                    x = MaxPooling2D(pool_size=3, strides=2)(x)
-                    
-            elif fp == 32:
-                x = BatchNormalization()(x)
-                if chromosome.cnn_layers[i].maxpool:
-                    x = MaxPooling2D(pool_size=3, strides=2)(x)
-                x = SpatialDropout2D(chromosome.cnn_layers[i].dropout)(x)
-                # x = Dropout(chromosome.cnn_layers[i].dropout)(x)
-                
-            elif fp == 322:
-                if chromosome.cnn_layers[i].maxpool:
-                    x = MaxPooling2D(pool_size=3, strides=2)(x)
-                x = BatchNormalization()(x)
-                x = SpatialDropout2D(chromosome.cnn_layers[i].dropout)(x)
-                # x = Dropout(chromosome.cnn_layers[i].dropout)(x)
-                
-            else:
-                x = BatchNormalizationF16()(x)
-
-        x = Flatten()(x)
-
-        for i in range(chromosome.n_nn):
-            act = chromosome.nn_layers[i].activation
-            if act in ['relu', 'sigmoid', 'tanh', 'elu']:
-                x = Dense(chromosome.nn_layers[i].units, activation=act)(x)
-            elif act == 'prelu':
-                x = Dense(chromosome.nn_layers[i].units)(x)
-                x = PReLU()(x)
-            else:
-                x = Dense(chromosome.nn_layers[i].units)(x)
-                x = LeakyReLU()(x)
-            x = BatchNormalization()(x)
-            x = Dropout(chromosome.nn_layers[i].dropout)(x)
-        x = Dense(self.num_clases, activation='softmax')(x)
-
-        model = Model(inputs=inp, outputs=x)
-        if self.verb:
-            model.summary()
-        model.compile(loss='categorical_crossentropy',
-                      optimizer=Adam(0.001),
-                      metrics=['accuracy'])
-        return model
 
     @staticmethod
     def show_result(history, metric='acc'):
@@ -509,6 +614,14 @@ class FitnessCNN(Fitness):
 
 class FitnessCNNParallel(Fitness):
 
+    def __init__(self):
+        super().__init__()
+        self.main_line = None
+        self.chrom_folder = None
+        self.fitness_file = None
+        self.max_gpus = None
+        self.fp = None
+
     def calc(self, chromosome, test=False, precise_mode=False):
         return self.eval_list([chromosome], test=test, precise_mode=precise_mode)[0]
 
@@ -520,11 +633,6 @@ class FitnessCNNParallel(Fitness):
                 self.com_line += " -t %d" % int(test)
             if precise_mode:
                 self.com_line += " -pm %d" % int(precise_mode)
-                #self.com_line = '%s -gf %s -ff %s -t %d -fp %d' % \
-                #            (self.command, self.chromosome_file, self.fitness_file, int(self.test), self.fp)
-            #else:
-            #    self.com_line = '%s -gf %s -ff %s -fp %d' % \
-            #                    (self.command, self.chromosome_file, self.fitness_file, self.fp)
 
         def run(self):
             args = shlex.split(self.com_line)
@@ -568,23 +676,12 @@ class FitnessCNNParallel(Fitness):
         filename = os.path.join(self.chrom_folder, "gen_%d" % id_)
         chromosome.save(filename)
         return filename
-        with open(filename, 'w') as f:
-            f.write(chromosome.__repr__())
-        return filename
 
     @staticmethod
     def read_score(filename):
-        test_score, val_score = None, None
+        score = None
         with open(filename, 'r') as f:
             for line in f:
-                if 'Val_score' in line:
-                    val_score = float(line.split(':')[1])
-                if 'Test_score' in line:
-                    test_score = float(line.split(':')[1])
-        if test_score is None:
-            return val_score
-        else:
-            return val_score, test_score
-
-
-
+                if 'Score' in line:
+                    score = float(line.split(':')[1])
+        return score
