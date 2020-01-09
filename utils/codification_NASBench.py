@@ -1,8 +1,16 @@
 import random
 import numpy as np
+from keras import Input, Model
+from keras.optimizers import Adam
+
 from utils.codifications import Fitness, Chromosome
 import sys
+from keras.layers import Conv2D, Dropout, MaxPooling2D, Dense, BatchNormalization, ReLU, add, GlobalAveragePooling2D
+from keras.layers.merge import concatenate
+from utils.BN16 import BatchNormalizationF16
+
 sys.path.append('../../nasbench')
+sys.path.append('../nasbench')
 from nasbench import api
 
 
@@ -20,6 +28,10 @@ class ChromosomeNASBench(Chromosome):
     _connection_prob = 0.5
     MAX_VERTICES = 7
     MAX_EDGES = 9
+
+    STEM_SIZE = 128
+    N_BLOCKS = 3
+    N_CELLS = 3
     """
     Connections are in the form:
     
@@ -57,7 +69,7 @@ class ChromosomeNASBench(Chromosome):
         self.blocks_deleted = 0
         self.conn_added = 0
         self.conn_deleted = 0
-
+        self.fp = 32
         self.blocks_try_added = 0
         self.blocks_try_delete = 0
         self.fix_connections()
@@ -97,6 +109,7 @@ class ChromosomeNASBench(Chromosome):
             c += 1
             if c > 100:
                 print("Error in while!")
+
                 raise AssertionError
 
     def select_random_connection(self):
@@ -156,7 +169,7 @@ class ChromosomeNASBench(Chromosome):
         ones_indices = np.where(self.matrix == 1)
         n_ones = len(ones_indices[0])
 
-        random_ids = np.arange(n_ones)
+        random_ids = np.arange(n_ones   )
         np.random.shuffle(random_ids)
 
         for ID in random_ids:
@@ -226,6 +239,84 @@ class ChromosomeNASBench(Chromosome):
         ops = self.operations.copy()
         matrix = self.matrix.copy()
         return ChromosomeNASBench(operations=ops, matrix=matrix)
+
+    # TODO: Change the initialization of the conv layer
+    def conv_batch_relu(self, input_tensor, conv_size, n_features):
+        x_ = Conv2D(n_features, conv_size, padding='same')(input_tensor)
+        if self.fp == 16:
+            x_ = BatchNormalizationF16()(x_)
+        else:
+            x_ = BatchNormalization()(x_)
+        x_ = ReLU()(x_)
+        return x_
+
+    def _projection(self, input_tensor, n_features):
+        return self.conv_batch_relu(input_tensor, 1, n_features)
+
+    def _get_tensor_op(self, input_tensors, operation, n_features):
+
+        if operation == self.OUTPUT:
+            projection_dim = max(1, n_features // len(input_tensors))
+            input_tensors = [self._projection(tensor, projection_dim) for tensor in input_tensors]
+            input_tensor = concatenate(input_tensors)
+            return self._projection(input_tensor, n_features)
+
+        if len(input_tensors) > 1:
+            input_tensor = add(input_tensors)
+        else:
+            input_tensor = input_tensors[0]
+
+        if operation == self.CONV1X1:
+            return self.conv_batch_relu(input_tensor, 1, n_features)
+        if operation == self.CONV3X3:
+            return self.conv_batch_relu(input_tensor, 3, n_features)
+        if operation == self.MAXPOOL3X3:
+            return MaxPooling2D(pool_size=3, strides=1, padding='same')(input_tensor)
+        raise AssertionError
+
+    def _build_cell(self, input_tensor, n_features):
+        ops = self.operations # operations list
+        matrix = self.matrix  # connection matrix
+        tensor_ops = [input_tensor]  # Tensors (or layers) list
+
+        for k in range(1, len(ops)):  # for each op, build a tensor and add it to "tensor_ops" list
+            inputs = []
+            inputs_row = matrix[:, k]
+            for op_index, is_connection in enumerate(inputs_row):
+                if is_connection == 1:
+                    if op_index == 0:
+                        inputs.append(self._projection(tensor_ops[0], n_features))
+                    else:
+                        inputs.append(tensor_ops[op_index])
+            new_tensor = self._get_tensor_op(inputs, ops[k], n_features)
+            tensor_ops.append(new_tensor)
+        return tensor_ops[-1]
+
+    def decode(self, input_shape, num_classes=10, verb=False, fp=32, **kwargs):
+        self.fp = fp
+        inp = Input(input_shape)
+        x = self.conv_batch_relu(inp, 3, self.STEM_SIZE) # Initial stem convolution with size 3x3
+        n_channels = self.STEM_SIZE
+        for i in range(self.N_BLOCKS):
+            if i > 0:                       # Down sample at start (except first)
+                x = MaxPooling2D(2, 2)(x)
+                n_channels = 2 * n_channels # Double output channels each time we down sample
+            for k in range(self.N_CELLS):
+                x = self._build_cell(x, n_channels)
+
+        # Global average pool
+        x = GlobalAveragePooling2D()(x)
+
+        # Fully-connected layer to labels
+        x = Dense(num_classes, activation='softmax')(x)
+
+        model = Model(inputs=inp, outputs=x)
+        if verb:
+            model.summary()
+        model.compile(loss='categorical_crossentropy',
+                      optimizer=Adam(),
+                      metrics=['accuracy'])
+        return model
 
 
 class FitnessNASBench(Fitness):

@@ -4,6 +4,32 @@ from keras import backend as K
 import subprocess, re
 import time
 
+def lr_schedule(epoch):
+    """Learning Rate Schedule
+
+    Learning rate is scheduled to be reduced after 80, 120, 160, 180 epochs.
+    Called automatically every epoch as part of callbacks during training.
+
+    # Arguments
+        epoch (int): The number of epochs
+
+    # Returns
+        lr (float32): learning rate
+    """
+    lr = 1e-3
+    if epoch > 180:
+        lr *= 0.5e-3
+    elif epoch > 160:
+        lr *= 1e-3
+    elif epoch > 120:
+        lr *= 1e-2
+    elif epoch > 80:
+        lr *= 1e-1
+    print('Learning rate: ', lr)
+    return lr
+
+
+
 
 def clr_decay_with_warmup(global_step,
                              max_lr,
@@ -45,7 +71,7 @@ class CLRScheduler(keras.callbacks.Callback):
         self.global_step = self.global_step + 1
         lr = K.get_value(self.model.optimizer.lr)
         loss = logs['loss']
-        acc = logs['acc']
+        acc = [logs[key] for key in logs.keys() if 'acc' in key][0]
         self.accs.append(acc)
         self.losses.append(loss)
         self.learning_rates.append(lr)
@@ -200,7 +226,7 @@ class EarlyStopByTimeAndAcc(keras.callbacks.Callback):
             return
 
         # Verifying if the validation accuracy doesn't improve over the baseline.
-        val_acc = logs['val_acc']
+        val_acc = [logs[key] for key in logs.keys() if 'val_acc' in key][0]
         if val_acc <= self.baseline:
             self.epochs_without_improve += 1
         else:

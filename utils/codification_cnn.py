@@ -11,17 +11,18 @@ from time import time
 import keras
 import numpy as np
 from keras import Input, Model
-from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, LearningRateScheduler
 from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.models import load_model
 from keras.optimizers import Adam
+from keras_preprocessing.image import ImageDataGenerator
 from matplotlib import pyplot as plt
 from tensorflow.python.framework.errors_impl import ResourceExhaustedError
 
 from utils.BN16 import BatchNormalizationF16
 from utils.codifications import Layer, Chromosome, Fitness
 from utils.lr_finder import LRFinder
-from utils.utils import smooth_labels, WarmUpCosineDecayScheduler, EarlyStopByTimeAndAcc, CLRScheduler
+from utils.utils import smooth_labels, WarmUpCosineDecayScheduler, EarlyStopByTimeAndAcc, CLRScheduler, lr_schedule
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -189,6 +190,7 @@ class ChromosomeCNN(Chromosome):
 
         self.n_cnn = len(cnn_layers)
         self.n_nn = len(nn_layers)
+        self.fp = 32
 
     @classmethod
     def random_individual(cls):
@@ -272,8 +274,7 @@ class ChromosomeCNN(Chromosome):
         new_nn_layers = [layer.self_copy() for layer in self.nn_layers]
         return ChromosomeCNN(cnn_layers=new_cnn_layers, nn_layers=new_nn_layers)
 
-    @staticmethod
-    def get_cnn_layer(inp_, activation, filters, k_size):
+    def get_cnn_layer(self, inp_, activation, filters, k_size):
         if activation in ['relu', 'sigmoid', 'tanh', 'elu']:
             x_ = Conv2D(filters, k_size, activation=activation, padding='same')(inp_)
         elif activation == 'prelu':
@@ -284,9 +285,8 @@ class ChromosomeCNN(Chromosome):
             x_ = LeakyReLU()(x_)
         return x_
 
-    @staticmethod
-    def get_BN_MP_DROP_block(inp_, maxpool, dropout, fp=32):
-        if fp == 32:
+    def get_BN_MP_DROP_block(self, inp_, maxpool, dropout):
+        if self.fp == 32:
             x_ = BatchNormalization()(inp_)
             if maxpool:
                 print("MAXPOOL")
@@ -300,15 +300,14 @@ class ChromosomeCNN(Chromosome):
             x_ = Dropout(dropout)(x_)
         return x_
 
-    @staticmethod
-    def decode_layer(layer, inp_, allow_maxpool=False, fp=32):
+    def decode_layer(self, layer, inp_, allow_maxpool=False):
         act_ = layer.activation
         filters_ = layer.filters
         k_size = layer.k_size
         maxpool = layer.maxpool and allow_maxpool
         dropout = layer.dropout
-        x_ = ChromosomeCNN.get_cnn_layer(inp_=inp_, activation=act_, filters=filters_, k_size=k_size)
-        x_ = ChromosomeCNN.get_BN_MP_DROP_block(inp_=x_, maxpool=maxpool, dropout=dropout, fp=fp)
+        x_ = self.get_cnn_layer(inp_=inp_, activation=act_, filters=filters_, k_size=k_size)
+        x_ = self.get_BN_MP_DROP_block(inp_=x_, maxpool=maxpool, dropout=dropout)
         return x_
 
     def get_nn_layers(self, x_, num_classes):
@@ -322,12 +321,16 @@ class ChromosomeCNN(Chromosome):
             else:
                 x_ = Dense(self.nn_layers[i].units)(x_)
                 x_ = LeakyReLU()(x_)
-            x_ = BatchNormalization()(x_)
+            if self.fp == 16:
+                x_ = BatchNormalizationF16()(x_)
+            else:
+                x_ = BatchNormalization()(x_)
             x_ = Dropout(self.nn_layers[i].dropout)(x_)
         x_ = Dense(num_classes, activation='softmax')(x_)
         return x_
 
     def decode(self, input_shape, num_classes=10, verb=False, fp=32, **kwargs):
+        self.fp = fp
         inp = Input(shape=input_shape)
         x = inp
 
@@ -375,7 +378,7 @@ class ChromosomeCNN(Chromosome):
                 x = Dropout(self.cnn_layers[i].dropout)(x)
 
             elif fp == 322:
-                if self.cnn_layers[i].maxpool:
+                if self.cnn_layers[i].maxpool:ResNet151
                     x = MaxPooling2D()(x)
                 x = BatchNormalization()(x)
                 x = Dropout(self.cnn_layers[i].dropout)(x)
@@ -428,10 +431,12 @@ class FitnessCNN(Fitness):
         self.num_clases = None
         self.cosine_decay = None
         self.y_train = None
+        self.include_time = False
+        self.test_eps = 200
 
     def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
                    warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False,
-                   precise_epochs=None):
+                   precise_epochs=None, include_time=False, test_eps=200):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
@@ -448,6 +453,8 @@ class FitnessCNN(Fitness):
         self.input_shape = self.x_train[0].shape
         self.num_clases = self.y_train.shape[1]
         self.cosine_decay = cosine_decay
+        self.include_time = include_time
+        self.test_eps = test_eps
         # self.set_callbacks = self.set_callbacks()
         if self.smooth > 0:
             self.y_train = smooth_labels(self.y_train, self.smooth)
@@ -467,33 +474,46 @@ class FitnessCNN(Fitness):
                                                   warmup_learning_rate=0.0,
                                                   warmup_steps=warm_up_steps,
                                                   hold_base_rate_steps=base_steps)
+            schedule = LearningRateScheduler(lr_schedule)
         else:
             schedule = CLRScheduler(max_lr=self.learning_rate_base,
                                     min_lr=0.00002,
                                     total_steps=total_steps)
         callbacks.append(schedule)
         min_val_acc = (1. / self.num_clases) + 0.1
-        early_stop = EarlyStopByTimeAndAcc(limit_time=90,
+        early_stop = EarlyStopByTimeAndAcc(limit_time=180,
                                            baseline=min_val_acc,
-                                           patience=5)
-        callbacks.append(early_stop)
+                                           patience=10)
+        # callbacks.append(early_stop)
+        print("No Early stopping")
         # callbacks.append(EarlyStopping(monitor='val_acc', patience=epochs//5, baseline=min_val_acc))
+        val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'
         if file_model is not None:
             # checkpoint_last = ModelCheckpoint(file_model)
-            # checkpoint_loss = ModelCheckpoint(file_model, monitor='val_loss', save_best_only=True)
-            checkpoint_acc = ModelCheckpoint(file_model, monitor='val_acc', save_best_only=True)
+            # checkpoint_loss = ModelCheckpoint(file_model, monitor='val_loss', save_best_only=True)                
+            checkpoint_acc = ModelCheckpoint(file_model, monitor=val_acc, save_best_only=True)
             callbacks.append(checkpoint_acc)
 
         if self.early_stop > 0 and keras.__version__ == '2.2.4':
-            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop, restore_best_weights=True))
+            callbacks.append(EarlyStopping(monitor=val_acc, patience=self.early_stop, restore_best_weights=True))
         elif self.early_stop > 0:
-            callbacks.append(EarlyStopping(monitor='val_acc', patience=self.early_stop))
+            callbacks.append(EarlyStopping(monitor=val_acc, patience=self.early_stop))
         if self.reduce_plateu:
-            callbacks.append(ReduceLROnPlateau(monitor='val_acc', factor=0.2,
+            callbacks.append(ReduceLROnPlateau(monitor=val_acc, factor=0.2,
                                                patience=5, verbose=self.verb))
+
         return callbacks
 
-    def get_params(self, precise_mode=False):
+    def get_params(self, precise_mode=False, test=False):
+        if test:
+            self.x_train = np.concatenate([np.copy(self.x_train), np.copy(self.x_val)])
+            self.x_val = np.copy(self.x_test)
+            self.y_train = np.concatenate([np.copy(self.y_train), np.copy(self.y_val)])
+            self.y_val = np.copy(self.y_test)
+            try:
+                return self.test_eps
+            except AttributeError:
+                return 300
         if precise_mode and self.precise_epochs is not None:
             return self.precise_epochs
         else:
@@ -505,9 +525,9 @@ class FitnessCNN(Fitness):
                             batch_size=self.batch_size, epochs=2, num_batches=300, return_model=False)
         return lr
 
-    def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
+    def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False, augmnt=True):
         # self.verb = True
-        epochs = self.get_params(precise_mode)
+        epochs = self.get_params(precise_mode, test)
         print("Training...", end=" ")
         if fp == 16 or fp == 160:
             keras.backend.set_floatx("float16")
@@ -529,20 +549,39 @@ class FitnessCNN(Fitness):
                 keras.backend.set_value(model.optimizer.lr, lr)
                 print("Learning Rate founded: %0.5f" % lr)
 
-            h = model.fit(self.x_train, self.y_train,
-                          batch_size=self.batch_size,
-                          epochs=epochs,
-                          verbose=self.verb,
-                          validation_data=(self.x_val, self.y_val),
-                          callbacks=callbacks)
-
+            if augmnt:
+                datagen = self.get_datagen()
+                datagen.fit(self.x_train)
+                h = model.fit_generator(datagen.flow(self.x_train, self.y_train, batch_size=self.batch_size),
+                                        validation_data=(self.x_val, self.y_val),
+                                        epochs=epochs, verbose=self.verb, workers=4,
+                                        callbacks=callbacks,
+                                        steps_per_epoch=int(self.x_train.shape[0] / self.batch_size))
+            else:
+                h = model.fit(self.x_train, self.y_train,
+                              batch_size=self.batch_size,
+                              epochs=epochs,
+                              validation_data=(self.x_val, self.y_val),
+                              callbacks=callbacks,
+                              verbose=self.verb)
             if test:
                 model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 # model = load_model(file_model)
 
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
-                score = 1 - np.max(h.history['val_acc'])
+                key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
+                '''if precise_mode:
+                    aux = np.array(h.history[key_val_acc])
+                    maxes = np.argsort(aux)[-3::]
+                    score = 1 - np.mean(aux[maxes])
+                else:
+                    score = 1 - np.max(h.history[key_val_acc])
+                    '''
+                score = 1 - np.max(h.history[key_val_acc])
+                if self.include_time:
+                    training_time = time() - ti
+                    score += np.log(training_time) / 1000.
         except Exception as e:
             score = [1 / self.num_clases, 1. / self.num_clases]
             if isinstance(e, ResourceExhaustedError):
@@ -555,7 +594,8 @@ class FitnessCNN(Fitness):
             return 1 - score[1]
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
-            score_val = 1 - np.max(h.history['val_acc'])
+            key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
+            score_val = 1 - np.max(h.history[key_val_acc])
             type_model = ['last', 'best_acc'][test]
             print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val, type_model, score_test))
             self.show_result(h, 'acc')
@@ -564,9 +604,20 @@ class FitnessCNN(Fitness):
         print("%0.4f in %0.1f min\n" % (score, (time() - ti) / 60))
         return score
 
+    def get_datagen(self):
+        return ImageDataGenerator(
+                # featurewise_center=True,
+                width_shift_range=4,
+                height_shift_range=4,
+                #fill_mode='constant',
+                horizontal_flip=True,
+                rotation_range=15)
+
     @staticmethod
     def show_result(history, metric='acc'):
-        epochs = np.linspace(0, len(history.history['acc']) - 1, len(history.history['acc']))
+        if metric not in history.history.keys() and metric == 'acc':
+            metric = 'accuracy'
+        epochs = np.linspace(0, len(history.history[metric]) - 1, len(history.history[metric]))
         argmax_val = np.argmax(history.history['val_%s' % metric])
         plt.plot(epochs, history.history['val_%s' % metric], label='validation')
         plt.plot(epochs, history.history[metric], label='train')

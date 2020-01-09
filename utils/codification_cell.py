@@ -80,7 +80,7 @@ class ChromosomeFilterGrow(ChromosomeSkip):
 
     layers_types = {'CNN': CNNLayer_WOMP, 'NN': NNLayer}
     num_blocks = 3
-    initial_filters = 32
+    initial_filters = 128
 
     def __init__(self, cnn_layers=None, nn_layers=None, connections=None, chromosome_skip=None):
         if chromosome_skip is not None:

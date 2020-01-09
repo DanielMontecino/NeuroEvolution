@@ -26,6 +26,7 @@ class ChromosomeSkip(ChromosomeCNN):
         if not isinstance(self.connections, Connections):
             print("Problems with type", type(self.connections))
             print(self.connections)
+        self.fp = 32
 
     @classmethod
     def random_individual(cls):
@@ -88,7 +89,7 @@ class ChromosomeSkip(ChromosomeCNN):
         if act_ in ['relu', 'sigmoid', 'tanh', 'elu']:
             x_ = Conv2D(filters, k_size, activation=act_, padding='same')(inp_)
         elif act_ == 'prelu':
-            x_ = Conv2D(filters, k_size, padding='same')(inp_)
+            x_ = Conv2D(filters, k_size, padding='same'# Fully-connected layer to labels)(inp_)
             x_ = PReLU()(x_)
         else:
             x_ = Conv2D(filters, k_size, padding='same')(inp_)
@@ -103,7 +104,7 @@ class ChromosomeSkip(ChromosomeCNN):
         else:
             x_ = BatchNormalizationF16()(x_)
             if layer.maxpool and allow_maxpool:
-                print("MAXPOOL")
+                print("MAXPOOL")# Fully-connected layer to labels
                 x_ = MaxPooling2D()(x_)
             x_ = Dropout(layer.dropout)(x_)
 
@@ -115,7 +116,7 @@ class ChromosomeSkip(ChromosomeCNN):
 
         layers = []
         if len(cnn_layers) > 0:
-            layers.append(self.decode_layer(cnn_layers[0], x_, allow_maxpool=allow_maxpool, fp=fp))
+            layers.append(self.decode_layer(cnn_layers[0], x_, allow_maxpool=allow_maxpool))
 
         for block in range(connections.shape[0]):
             input_connections = []
@@ -133,7 +134,7 @@ class ChromosomeSkip(ChromosomeCNN):
                 x_ = concatenate(input_connections)
             else:
                 x_ = input_connections[0]
-            layers.append(self.decode_layer(cnn_layers[block + 1], x_, allow_maxpool=allow_maxpool, fp=fp))
+            layers.append(self.decode_layer(cnn_layers[block + 1], x_, allow_maxpool=allow_maxpool))
         return layers
 
     def decode(self, input_shape, num_classes=10, verb=False, fp=32, **kwargs):
