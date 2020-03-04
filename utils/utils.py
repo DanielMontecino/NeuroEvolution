@@ -1,8 +1,46 @@
 import numpy as np
 import keras
 from keras import backend as K
-import subprocess, re
+import subprocess
+import re
 import time
+
+
+def get_random_eraser(p=0.5, s_l=0.02, s_h=0.4, r_1=0.3, r_2=1/0.3, v_l=0, v_h=255, pixel_level=False):
+    if pixel_level:
+        print("Cutout WITH pixel-level noise")
+    else:
+        print("Cutout WITHOUT pixel-level noise")
+
+    def eraser(input_img):
+        img_h, img_w, img_c = input_img.shape
+        p_1 = np.random.rand()
+
+        if p_1 > p:
+            return input_img
+
+        while True:
+            s = np.random.uniform(s_l, s_h) * img_h * img_w
+            r = np.random.uniform(r_1, r_2)
+            w = int(np.sqrt(s / r))
+            h = int(np.sqrt(s * r))
+            left = np.random.randint(0, img_w)
+            top = np.random.randint(0, img_h)
+
+            if left + w <= img_w and top + h <= img_h:
+                break
+
+        if pixel_level:
+            c = np.random.uniform(v_l, v_h, (h, w, img_c))
+        else:
+            c = np.random.uniform(v_l, v_h)
+
+        input_img[top:top + h, left:left + w, :] = c
+
+        return input_img
+
+    return eraser
+
 
 def lr_schedule(epoch):
     """Learning Rate Schedule
@@ -29,21 +67,80 @@ def lr_schedule(epoch):
     return lr
 
 
-
-
-def clr_decay_with_warmup(global_step,
+def linear_decay_with_warmup(global_step,
                              max_lr,
                              min_lr,
                              total_steps,
-                             cycles=1):
+                             warmup_steps=1):
 
-    step_size = int(total_steps / (2 * cycles) )
+    x1, y1 = 0, min_lr
+    x2, y2 = warmup_steps, max_lr
+    x3, y3 = total_steps, min_lr
+
+    if global_step < warmup_steps:
+        learning_rate = global_step * (y2 - y1) / (x2 - x1) + y1
+    else:
+        learning_rate = (global_step * (y3 - y2) + (y2 * x3 - y3 * x2)) / (x3 - x2)
+
+    return np.where(global_step > total_steps, 0.0, learning_rate)
+
+
+def clr_decay_with_warmup(global_step,
+                          max_lr,
+                          min_lr,
+                          total_steps,
+                          cycles=1):
+
+    step_size = int(total_steps / (2 * cycles))
     cycle = np.floor(1 + global_step / (2 * step_size))
     x = np.abs(global_step / step_size - 2 * cycle + 1)
 
     learning_rate = min_lr + (max_lr - min_lr) * np.max((0.0, 1.0 - x))
 
     return np.where(global_step > total_steps, 0.0, learning_rate)
+
+
+class LinearScheduler(keras.callbacks.Callback):
+
+    def __init__(self,
+                 max_lr,
+                 min_lr,
+                 total_steps,
+                 warmup_steps=1,
+                 global_step_init=0,
+                 verbose=0):
+
+        super(LinearScheduler, self).__init__()
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.total_steps = total_steps
+        self.warmup_steps = max(warmup_steps, 1)
+        self.global_step = global_step_init
+        self.verbose = verbose
+        self.learning_rates = []
+        self.losses = []
+        self.accs = []
+
+    def on_batch_end(self, batch, logs=None):
+        self.global_step = self.global_step + 1
+        lr = K.get_value(self.model.optimizer.lr)
+        loss = logs['loss']
+        acc = [logs[key] for key in logs.keys() if 'acc' in key][0]
+        self.accs.append(acc)
+        self.losses.append(loss)
+        self.learning_rates.append(lr)
+
+    def on_batch_begin(self, batch, logs=None):
+        lr = linear_decay_with_warmup(global_step=self.global_step,
+                                      max_lr=self.max_lr,
+                                      min_lr=self.min_lr,
+                                      total_steps=self.total_steps,
+                                      warmup_steps=self.warmup_steps)
+
+        K.set_value(self.model.optimizer.lr, lr)
+        if self.verbose > 0:
+            print('\nBatch %05d: setting learning '
+                  'rate to %s.' % (self.global_step + 1, lr))
 
 
 class CLRScheduler(keras.callbacks.Callback):

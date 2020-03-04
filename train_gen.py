@@ -39,25 +39,29 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % gpu_id
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 training_time = time()
-score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
-                     fp=args['float_precision'], precise_mode=args['precise_mode'])
+try:
+    score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
+                         fp=args['float_precision'], precise_mode=args['precise_mode'])
+except:
+    score = 1
 training_time = (time() - training_time) / 60.
 print()
-with open("%s_score" % args['gen_file'], 'a') as f:
+with open("%s_score" % args['gen_file'], 'w') as f:
     f.write("\nScore: %0.6f" % score)
 
 abs_ti = (time() - abs_ti) / 60.
+hours = abs_ti // 60
+minutes = abs_ti % 60
 work_directory = os.path.split(args['gen_file'])[0]
 record_file = os.path.join(work_directory, 'RECORD')
 with open(record_file, 'a') as f:
     f.write("-" * 40 + "\n")
     f.write(f"{chromosome.__repr__()}\n")
     if abs_ti > 10:
-        f.write("Taking too much time")
+        f.write("Taking too much time\n")
     f.write(f"Precision:\t{args['precise_mode']}\n")
     f.write(f"Score:\t\t{score.__format__('2.4')}\n")
-    f.write(f"Absolute time:\t{abs_ti.__format__('2.2')} min\n")
-    f.write(f"Training time:\t{training_time.__format__('2.2')} min\n\n")
+    f.write("Training time:\t%d:%d\n" % (hours, minutes))
 print("Score: %0.4f" % score)
 
 

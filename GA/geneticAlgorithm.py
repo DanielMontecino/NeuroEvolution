@@ -184,7 +184,7 @@ class GeneticAlgorithm(object):
 
     def show_history_(self, zoom=False):
         colors = np.array([[31, 119, 180], [255, 127, 14]]) / 255.
-        h = self.history
+        h = self.history[:,0:self.generation]
         epochs = np.linspace(1, h.shape[1], h.shape[1])
         bests = [np.min(h, axis=0), np.max(h, axis=0)][self.maximize]
         plt.figure(figsize=(10, 5))
@@ -196,7 +196,7 @@ class GeneticAlgorithm(object):
         plt.plot(epochs, bests, color=colors[0], lw=1, label='best', linestyle='--')
 
         if self.make_precision_validation:
-            h2 = self.history_precision
+            h2 = self.history_precision[:,0:self.generation]
             bests = [np.min(h2, axis=0), np.max(h2, axis=0)][self.maximize]
             for a in h2:
                 plt.scatter(epochs, a, s=s, color='r', alpha=0.5, marker='.')
@@ -337,24 +337,17 @@ class GenerationalGA(GeneticAlgorithm):
         for individual in best_generation_individuals:
             if individual.__repr__() not in self.history_precision_fitness.keys():
                 individuals_to_evaluate.append(individual)
-
         evaluated_fitness = self.fitness_evaluator.eval_list(individuals_to_evaluate, precise_mode=True)
-        # Add newly evaluated individuals to the history
+
+        # Add new evaluated individuals to the history
         for fit, individual in zip(evaluated_fitness, individuals_to_evaluate):
             self.history_precision_fitness[individual.__repr__()] = fit
 
         # verify if there is a new best individual
-        # Get the best individual of this generation
-        best_generation_fitness = [self.history_precision_fitness[individual.__repr__()]
-                                   for individual in best_generation_individuals]
-        if self.maximize:
-            arg = np.argmax(best_generation_fitness).astype(np.int32)
-        else:
-            arg = np.min(best_generation_fitness).astype(np.int32)
-        best_precision_individual = best_generation_individuals[int(arg)]
-        best_precision_individual_fit = best_generation_fitness[int(arg)]
+        for individual in best_generation_individuals:
+            fitness_precision = self.history_precision_fitness[individual.__repr__()]
+            self.validate_best(individual, fitness_precision)
 
-        self.validate_best(best_precision_individual, best_precision_individual_fit)
         return best_generation_individuals
 
     def get_best(self):
@@ -501,6 +494,7 @@ class TwoLevelGA(GenerationalGA):
 
         self.parent_selector_level1 = TournamentSelection(self.num_parents_level1)
         self.parent_selector_level2 = TournamentSelection(self.num_parents_level2)
+        self.ranking1, self.ranking2 = None, None
 
         super().__init__(num_parents=self.num_parents_level1, chromosome=chromosome,
                          parent_selector=self.parent_selector_level1, fitness=fitness,
@@ -543,50 +537,68 @@ class TwoLevelGA(GenerationalGA):
     def initialize_evolution(self):
         super().initialize_evolution()
         if self.population_1 == []:
+            self.print_genetic("Initial population initialization...", end='')
             self.population_1 = self.population
+            self.population_2 = []
+            self.print_genetic("%d" % len(self.population_1))
 
     def evolve(self, show=True):
         self.initialize_evolution()
         self.ti = time()
-
+        
+        self.ranking1 = self.evaluate_population(level=1)
+        self.generation += 1
         for self.generation in range(self.generation, self.num_generations):
-            # Evaluate the population, ranking it, actualize parameters and SAVE
-            ranking1 = self.evaluate_population(level=1)
+            if self.generation > self.start_level2:
+                try:
+                   _ = self.ranking2
+                except AttributeError:
+                    next_generation_level1, all_parents_level1 = \
+                        self.parent_selector_level1.next_gen(self.population_1, self.ranking1,
+                                                             self.offspring_size_level1)
+                    self.population_1 = self.replace(self.population_1, self.ranking1, next_generation_level1)
+                    self.ranking1 = self.evaluate_population(level=1)
+
+                    # Get the best of the first level
+                    self.population_2 = [self.population_1[self.ranking1[i][0]] for i in range(self.num_pop_level2)]
+
+                    # Evaluate the population, ranking it, actualize parameters and SAVE
+                    self.ranking2 = self.evaluate_population(level=2)
 
             if self.generation < self.start_level2:
                 next_generation_level1, all_parents_level1 = \
-                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
-                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+                    self.parent_selector_level1.next_gen(self.population_1, self.ranking1, self.offspring_size_level1)
+                self.population_1 = self.replace(self.population_1, self.ranking1, next_generation_level1)
+                self.ranking1 = self.evaluate_population(level=1)
 
             elif self.generation == self.start_level2:
+                next_generation_level1, all_parents_level1 = \
+                    self.parent_selector_level1.next_gen(self.population_1, self.ranking1, self.offspring_size_level1)
+                self.population_1 = self.replace(self.population_1, self.ranking1, next_generation_level1)
+                self.ranking1 = self.evaluate_population(level=1)
+                
                 # Get the best of the first level
-                self.population_2 = [self.population_1[ranking1[i][0]] for i in range(self.num_pop_level2)]
+                self.population_2 = [self.population_1[self.ranking1[i][0]] for i in range(self.num_pop_level2)]
 
                 # Evaluate the population, ranking it, actualize parameters and SAVE
-                self.evaluate_population(level=2)
-
-                next_generation_level1, all_parents_level1 = \
-                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
-                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+                self.ranking2 = self.evaluate_population(level=2)
 
             elif self.generation % self.scnd_level_freq == 0:
-                # Evaluate the population, ranking it, actualize parameters and SAVE
-                ranking2 = self.evaluate_population(level=2)
-
-                offspring_level2, all_parents_level2 = self.parent_selector_level2.next_gen(self.population_2, ranking2,
+            
+                offspring_level2, all_parents_level2 = self.parent_selector_level2.next_gen(self.population_2, self.ranking2,
                                                                                             self.offspring_size_level2)
 
                 # Get the offspring of the first level
                 next_generation_level1, all_parents_level1 = \
-                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
+                    self.parent_selector_level1.next_gen(self.population_1, self.ranking1, self.offspring_size_level1)
 
                 # Get the N best of the first level
                 best_individuals_level1 = []
                 i = 0
                 c = 0
                 while len(best_individuals_level1) < self.offspring_size_level2:
-                    if self.population_1[ranking1[i][0]] not in self.population_2:
-                        best_individuals_level1.append(self.population_1[ranking1[i][0]])
+                    if self.population_1[self.ranking1[i][0]] not in self.population_2:
+                        best_individuals_level1.append(self.population_1[self.ranking1[i][0]])
                     i += 1
                     c += 1
                     if c > 100:
@@ -600,20 +612,24 @@ class TwoLevelGA(GenerationalGA):
                 assert self.offspring_size_level2 == len(best_individuals_level1)
                 next_generation_level2 = best_individuals_level1
 
-                # To show the evolution's progress
-                self.show_progress(ranking1, ranking2)
-
                 # replace in each population
-                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
-                self.population_2 = self.replace(self.population_2, ranking2, next_generation_level2)
+                self.population_1 = self.replace(self.population_1, self.ranking1, next_generation_level1)
+                self.population_2 = self.replace(self.population_2, self.ranking2, next_generation_level2)
+                
+                # Evaluate the population, ranking it, actualize parameters and SAVE
+                self.ranking1 = self.evaluate_population(level=1)
+                self.ranking2 = self.evaluate_population(level=2)
+                
+                # To show the evolution's progress
+                self.show_progress(self.ranking1, self.ranking2)
 
             else:
                 next_generation_level1, all_parents_level1 = \
-                    self.parent_selector_level1.next_gen(self.population_1, ranking1, self.offspring_size_level1)
-                self.population_1 = self.replace(self.population_1, ranking1, next_generation_level1)
+                    self.parent_selector_level1.next_gen(self.population_1, self.ranking1, self.offspring_size_level1)
+                self.population_1 = self.replace(self.population_1, self.ranking1, next_generation_level1)
 
                 # Evaluate the population, ranking it, actualize parameters and SAVE
-                self.evaluate_population(level=2)
+                self.ranking1 = self.evaluate_population(level=1)
 
             if datetime.datetime.now() > self.limit_time:
                 self.maybe_save_genetic_algorithm(verbose=True)
@@ -626,18 +642,18 @@ class TwoLevelGA(GenerationalGA):
                 _, fit_test = self.finishing_evolution(show=False)
                 self.perfm_evo.append(fit_test)
 
-        self.generation += 1
-        ranking1 = self.evaluate_population(level=1)
-        ranking2 = self.evaluate_population(level=2)
+        #self.generation += 1
+        #self.ranking1 = self.evaluate_population(level=1)
+        #self.ranking2 = self.evaluate_population(level=2)
 
         # To show evolution's progress
-        self.show_progress(ranking1, ranking2)
+        self.show_progress(self.ranking1, self.ranking2)
 
         winner, fit_test = self.finishing_evolution(show=show)
         if self.perfm_evo is not None:
             return winner, fit_test, self.perfm_evo
         else:
-            return winner, fit_test, ranking2
+            return winner, fit_test, self.ranking2
 
     def show_progress(self, rank1, rank2):
         best_id_level1, best_fit_level1 = rank1[0]

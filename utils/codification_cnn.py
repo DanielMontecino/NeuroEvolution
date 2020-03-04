@@ -23,6 +23,7 @@ from utils.BN16 import BatchNormalizationF16
 from utils.codifications import Layer, Chromosome, Fitness
 from utils.lr_finder import LRFinder
 from utils.utils import smooth_labels, WarmUpCosineDecayScheduler, EarlyStopByTimeAndAcc, CLRScheduler, lr_schedule
+from utils.utils import get_random_eraser
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -418,7 +419,6 @@ class FitnessCNN(Fitness):
         self.smooth = None
         self.warmup_epochs = None
         self.learning_rate_base = None
-        self.seconds = None
         self.batch_size = None
         self.epochs = None
         self.early_stop = None
@@ -432,15 +432,16 @@ class FitnessCNN(Fitness):
         self.cosine_decay = None
         self.y_train = None
         self.include_time = False
+        self.test = False
         self.test_eps = 200
+        self.augment = True
 
     def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
                    warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False,
-                   precise_epochs=None, include_time=False, test_eps=200):
+                   precise_epochs=None, include_time=False, test_eps=200, augment=True):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
         self.learning_rate_base = base_lr
-        self.seconds = 0
         self.batch_size = batch_size
         self.epochs = epochs
         self.early_stop = early_stop
@@ -448,16 +449,14 @@ class FitnessCNN(Fitness):
         self.verb = verbose
         self.find_lr = find_lr
         self.precise_epochs = precise_epochs
-        (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = data
-
-        self.input_shape = self.x_train[0].shape
-        self.num_clases = self.y_train.shape[1]
+        self.data = data
+        self.input_shape = self.data[0][0][0].shape
+        self.num_clases = self.data[0][1].shape[1]
         self.cosine_decay = cosine_decay
         self.include_time = include_time
         self.test_eps = test_eps
+        self.augment = augment
         # self.set_callbacks = self.set_callbacks()
-        if self.smooth > 0:
-            self.y_train = smooth_labels(self.y_train, self.smooth)
         return self
 
     def set_callbacks(self, file_model=None, epochs=None):
@@ -474,17 +473,17 @@ class FitnessCNN(Fitness):
                                                   warmup_learning_rate=0.0,
                                                   warmup_steps=warm_up_steps,
                                                   hold_base_rate_steps=base_steps)
-            schedule = LearningRateScheduler(lr_schedule)
+            #schedule = LearningRateScheduler(lr_schedule)
         else:
             schedule = CLRScheduler(max_lr=self.learning_rate_base,
                                     min_lr=0.00002,
                                     total_steps=total_steps)
         callbacks.append(schedule)
         min_val_acc = (1. / self.num_clases) + 0.1
-        early_stop = EarlyStopByTimeAndAcc(limit_time=180,
+        early_stop = EarlyStopByTimeAndAcc(limit_time=360,
                                            baseline=min_val_acc,
-                                           patience=10)
-        # callbacks.append(early_stop)
+                                           patience=8)
+        callbacks.append(early_stop)
         print("No Early stopping")
         # callbacks.append(EarlyStopping(monitor='val_acc', patience=epochs//5, baseline=min_val_acc))
         val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'
@@ -504,20 +503,20 @@ class FitnessCNN(Fitness):
 
         return callbacks
 
-    def get_params(self, precise_mode=False, test=False):
+    def get_params(self, chromosome, precise_mode=False, test=False):
+        (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = self.data
+        epochs = self.epochs
+        if precise_mode and self.precise_epochs is not None:
+            epochs = self.precise_epochs
         if test:
             self.x_train = np.concatenate([np.copy(self.x_train), np.copy(self.x_val)])
             self.x_val = np.copy(self.x_test)
             self.y_train = np.concatenate([np.copy(self.y_train), np.copy(self.y_val)])
             self.y_val = np.copy(self.y_test)
-            try:
-                return self.test_eps
-            except AttributeError:
-                return 300
-        if precise_mode and self.precise_epochs is not None:
-            return self.precise_epochs
-        else:
-            return self.epochs
+            epochs = self.test_eps
+        if self.smooth > 0:
+            self.y_train = smooth_labels(self.y_train, self.smooth)
+        return epochs
 
     def get_good_lr(self, model, model_file):
         lr_finder = LRFinder(model, model_file)
@@ -525,9 +524,10 @@ class FitnessCNN(Fitness):
                             batch_size=self.batch_size, epochs=2, num_batches=300, return_model=False)
         return lr
 
-    def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False, augmnt=True):
+    def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
         # self.verb = True
-        epochs = self.get_params(precise_mode, test)
+        self.test = test
+        epochs = self.get_params(chromosome, precise_mode, test)
         print("Training...", end=" ")
         if fp == 16 or fp == 160:
             keras.backend.set_floatx("float16")
@@ -540,6 +540,7 @@ class FitnessCNN(Fitness):
             callbacks = self.set_callbacks(file_model=file_model, epochs=epochs)
             model = chromosome.decode(num_classes=self.num_clases, input_shape=self.input_shape,
                                       verb=self.verb, fp=fp)
+
             if self.find_lr:
                 model.save('temp.hdf5')
                 lr = self.get_good_lr(model, file_model)
@@ -549,12 +550,12 @@ class FitnessCNN(Fitness):
                 keras.backend.set_value(model.optimizer.lr, lr)
                 print("Learning Rate founded: %0.5f" % lr)
 
-            if augmnt:
-                datagen = self.get_datagen()
+            if self.augment:
+                datagen = self.get_datagen(test=test)
                 datagen.fit(self.x_train)
                 h = model.fit_generator(datagen.flow(self.x_train, self.y_train, batch_size=self.batch_size),
                                         validation_data=(self.x_val, self.y_val),
-                                        epochs=epochs, verbose=self.verb, workers=4,
+                                        epochs=epochs, verbose=self.verb, workers=6 if self.test else 4,
                                         callbacks=callbacks,
                                         steps_per_epoch=int(self.x_train.shape[0] / self.batch_size))
             else:
@@ -565,7 +566,7 @@ class FitnessCNN(Fitness):
                               callbacks=callbacks,
                               verbose=self.verb)
             if test:
-                model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
+                # model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 # model = load_model(file_model)
 
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
@@ -600,18 +601,24 @@ class FitnessCNN(Fitness):
             print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val, type_model, score_test))
             self.show_result(h, 'acc')
             self.show_result(h, 'loss')
-        self.seconds += time() - ti
         print("%0.4f in %0.1f min\n" % (score, (time() - ti) / 60))
         return score
 
-    def get_datagen(self):
+    def get_datagen(self, test):
+        if self.augment == 'cutout' and test:
+            prep_function = get_random_eraser(v_l=np.min(self.x_train), v_h=np.max(self.x_train))
+            print("With Cutout augmentation")
+        else:
+            prep_function = None
+            print("Without cutout augmentation")
         return ImageDataGenerator(
-                # featurewise_center=True,
-                width_shift_range=4,
-                height_shift_range=4,
-                #fill_mode='constant',
-                horizontal_flip=True,
-                rotation_range=15)
+                    # featurewise_center=True,
+                    width_shift_range=4,
+                    height_shift_range=4,
+                    #fill_mode='constant',
+                    horizontal_flip=True,
+                    rotation_range=0,
+                    preprocessing_function=prep_function)
 
     @staticmethod
     def show_result(history, metric='acc'):
@@ -627,40 +634,6 @@ class FitnessCNN(Fitness):
         plt.xlabel('Epochs')
         plt.ylabel(metric)
         plt.show()
-
-    def fitness_n_models(self, c1, c2):
-        def decode_c(chromosome, inp, name=''):
-            x = Flatten()(inp)
-            for i in range(chromosome.n_layers):
-                act = chromosome.layers[i].activation
-                if act in ['relu', 'sigmoid', 'tanh', 'elu']:
-                    x = Dense(chromosome.layers[i].units, activation=act)(x)
-                elif act == 'prelu':
-                    x = Dense(chromosome.layers[i].units)(x)
-                    x = PReLU()(x)
-                else:
-                    x = Dense(chromosome.layers[i].units)(x)
-                    x = LeakyReLU()(x)
-                x = Dropout(chromosome.layers[i].dropout)(x)
-            x = Dense(self.num_clases, activation='softmax', name=name)(x)
-            return x
-
-        inputs = Input(shape=self.input_shape)
-        model = Model(inputs=inputs, outputs=[decode_c(c1, inputs, 'x1'), decode_c(c2, inputs, 'x2')],
-                      name="all_net")
-        losses = {'x1': "categorical_crossentropy", 'x2': "categorical_crossentropy"}
-        metrics = {'x1': 'accuracy',
-                   'x2': 'accuracy'}
-        model.compile(optimizer=Adam(), loss=losses, metrics=metrics)
-        model.summary()
-        model.fit(self.x_train, [self.y_train, self.y_train],
-                  batch_size=self.batch_size,
-                  epochs=self.epochs,
-                  verbose=self.verb,
-                  validation_data=(self.x_val, [self.y_val, self.y_val]))
-        # callbacks=self.callbacks)
-        score = model.evaluate(self.x_val, [self.y_val, self.y_val], verbose=1)
-        return score
 
 
 class FitnessCNNParallel(Fitness):
