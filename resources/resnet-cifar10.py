@@ -12,9 +12,15 @@ from keras.models import Model
 from keras.datasets import cifar10
 import numpy as np
 import os
+import sys
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "%s" % sys.argv[1]
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Training parameters
-batch_size = 32  # orig paper trained all networks with batch_size=128
+batch_size = int(sys.argv[2])  # orig paper trained all networks with batch_size=128
+
 epochs = 200
 data_augmentation = True
 num_classes = 10
@@ -36,7 +42,7 @@ subtract_pixel_mean = True
 # ResNet164 |27(18)| -----     | 94.07     | -----     | 94.54     | ---(---)
 # ResNet1001| (111)| -----     | 92.39     | -----     | 95.08+-.14| ---(---)
 # ---------------------------------------------------------------------------
-n = 12
+n = 2
 
 # Model version
 # Orig paper: version = 1 (ResNet v1), Improved ResNet: version = 2 (ResNet v2)

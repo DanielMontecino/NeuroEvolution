@@ -427,10 +427,10 @@ class GenerationalGA(GeneticAlgorithm):
         fit_test = self.maybe_make_statistical_validation(winner)
         self.best_individual['test'] = fit_test
         self.maybe_save_genetic_algorithm()
+        self.print_genetic("Best Gen -> \n%s" % winner)
+        self.print_genetic("With Fitness (val): %0.4f and (test): %0.4f" % (best_fit, fit_test))
 
         if show:
-            self.print_genetic("Best Gen -> \n%s" % winner)
-            self.print_genetic("With Fitness (val): %0.4f and (test): %0.4f" % (best_fit, fit_test))
             self.show_history()
         return winner, fit_test
 
@@ -644,7 +644,7 @@ class TwoLevelGA(GenerationalGA):
 
         #self.generation += 1
         #self.ranking1 = self.evaluate_population(level=1)
-        #self.ranking2 = self.evaluate_population(level=2)
+        self.ranking2 = self.evaluate_population(level=2)
 
         # To show evolution's progress
         self.show_progress(self.ranking1, self.ranking2)

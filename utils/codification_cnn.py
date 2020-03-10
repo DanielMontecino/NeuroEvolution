@@ -436,8 +436,8 @@ class FitnessCNN(Fitness):
         self.test_eps = 200
         self.augment = True
 
-    def set_params(self, data, batch_size=128, epochs=100, early_stop=10, reduce_plateau=True, verbose=1,
-                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=True, find_lr=False,
+    def set_params(self, data, batch_size=128, epochs=100, early_stop=0, reduce_plateau=False, verbose=1,
+                   warm_epochs=0, base_lr=0.001, smooth_label=False, cosine_decay=False, find_lr=False,
                    precise_epochs=None, include_time=False, test_eps=200, augment=True):
         self.smooth = smooth_label
         self.warmup_epochs = warm_epochs
@@ -510,9 +510,9 @@ class FitnessCNN(Fitness):
             epochs = self.precise_epochs
         if test:
             self.x_train = np.concatenate([np.copy(self.x_train), np.copy(self.x_val)])
-            self.x_val = np.copy(self.x_test)
+            self.x_val = np.copy(self.x_test)[0:3000, ...]
             self.y_train = np.concatenate([np.copy(self.y_train), np.copy(self.y_val)])
-            self.y_val = np.copy(self.y_test)
+            self.y_val = np.copy(self.y_test)[0:3000, ...]
             epochs = self.test_eps
         if self.smooth > 0:
             self.y_train = smooth_labels(self.y_train, self.smooth)
@@ -572,14 +572,7 @@ class FitnessCNN(Fitness):
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
                 key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
-                '''if precise_mode:
-                    aux = np.array(h.history[key_val_acc])
-                    maxes = np.argsort(aux)[-3::]
-                    score = 1 - np.mean(aux[maxes])
-                else:
-                    score = 1 - np.max(h.history[key_val_acc])
-                    '''
-                score = 1 - np.max(h.history[key_val_acc])
+                score = 1 - np.max(h.history[key_val_acc][-10::])
                 if self.include_time:
                     training_time = time() - ti
                     score += np.log(training_time) / 1000.
@@ -596,8 +589,8 @@ class FitnessCNN(Fitness):
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
-            score_val = 1 - np.max(h.history[key_val_acc])
-            type_model = ['last', 'best_acc'][test]
+            score_val = 1 - np.max(h.history[key_val_acc][-10::])
+            type_model = ['best_acc', 'last'][test]
             print('Acc -> Val acc: %0.4f,Test (%s) acc: %0.4f' % (score_val, type_model, score_test))
             self.show_result(h, 'acc')
             self.show_result(h, 'loss')

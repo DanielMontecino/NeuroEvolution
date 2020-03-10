@@ -4,6 +4,7 @@ from keras.datasets import fashion_mnist, mnist, cifar10, cifar100
 from keras.utils import to_categorical
 import numpy as np
 import os
+import cv2
 
 
 class DataManager(object):
@@ -13,8 +14,8 @@ class DataManager(object):
     '''
 
     def __init__(self, name='mnist', max_examples=None, clases=[], num_clases=10, train_split=0.8,
-                 folder_var_mnist=None):
-        assert name in ['mnist', 'fashion_mnist', 'cifar10', 'cifar100', 'MB','MBI','MRB','MRD','MRDBI']
+                 folder_var_mnist=None, resize=False, normalize=False):
+        assert name in ['mnist', 'fashion_mnist', 'cifar10', 'cifar100', 'MB', 'MBI', 'MRB', 'MRD', 'MRDBI']
         self.name = name
         if len(clases) > 0:
             self.num_clases = len(clases)
@@ -24,6 +25,8 @@ class DataManager(object):
         self.clases = clases
         self.train_split = train_split
         self.folder_variations_mnist = folder_var_mnist
+        self.resize = resize
+        self.normalize = normalize
 
     def load_data(self):
         if self.name == 'mnist':
@@ -38,21 +41,35 @@ class DataManager(object):
             data = get_mnist_variations(self.folder_variations_mnist, self.name)
         else:
             data = cifar100.load_data()
+
         train_data, test_data = self.select_clases(data)
         x_train, y_train = self.limit_examples(train_data)
         x_test, y_test = test_data
-
         del data, test_data, train_data
 
+        if self.name not in ['cifar10', 'cifar100']:
+            x_train = x_train.reshape(-1, 28, 28, 1)
+            x_test = x_test.reshape(-1, 28, 28, 1)
+
+        if self.resize:
+            x_train = self.resize_data(x_train)
+            x_test = self.resize_data(x_test)
+
         if self.name in ['cifar10', 'cifar100']:
-            x_train = x_train.reshape(-1, 32, 32, 3).astype('float32')
-            x_test  =  x_test.reshape(-1, 32, 32, 3).astype('float32')
+            x_train = x_train.astype('float32')
+            x_test = x_test.astype('float32')
         else:
-            x_train = x_train.reshape(-1, 28, 28, 1).astype('float32')
-            x_test = x_test.reshape(-1, 28, 28, 1).astype('float32')
-        if np.max(x_train) > 1:
-            x_train = x_train / 255.
-            x_test = x_test / 255.
+            x_train = x_train.astype('float32')
+            x_test = x_test.astype('float32')
+
+        if self.normalize:
+            mean, std = np.mean(x_train), np.std(x_train)
+            x_train = (x_train - mean) / std
+            x_test = (x_test - mean) / std
+        else:
+            max_value = np.max(x_train)
+            x_train = x_train / max_value
+            x_test = x_test / max_value
         y_train = [int(label) for label in y_train]
         y_test  = [int(label) for label in y_test]
         y_train, y_test = self.encode(y_train, y_test)
@@ -126,6 +143,18 @@ class DataManager(object):
     def split(self, data, labels, train_split):
         s = int(train_split * data.shape[0])
         return (data[:s], labels[:s]), (data[s:], labels[s:])
+
+    def resize_data(self, x):
+        is_one_channel = x.shape[-1] == 1
+        resized_images = np.zeros((x.shape[0], self.resize, self.resize, x.shape[-1]))
+        for i in range(x.shape[0]):
+            if is_one_channel:
+                resized_images[i, :, :, 0] = cv2.resize(x[i, ...], dsize=(self.resize, self.resize),
+                                                        interpolation=cv2.INTER_CUBIC)
+            else:
+                resized_images[i, ...] = cv2.resize(x[i, ...], dsize=(self.resize, self.resize),
+                                                    interpolation=cv2.INTER_CUBIC)
+        return resized_images
 
 
 def get_mnist_variations(folder, data):

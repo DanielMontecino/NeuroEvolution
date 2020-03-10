@@ -22,6 +22,7 @@ HyperParams._GROW_RATE_LIMITS = [1.5, 5.]
 HyperParams._N_CELLS = [1, 2]
 HyperParams._N_BLOCKS = [2]
 HyperParams._STEM = [32, 45]
+HyperParams.mutation_prob = 0.5
 
 OperationBlock._change_op_prob = 0.15
 OperationBlock._change_concat_prob = 0.15
@@ -49,7 +50,7 @@ data_folder = data_folder
 classes = []
 
 # genetic algorithm params:
-generations = 30
+generations = 20
 population_first_level = 20
 population_second_level = 8
 training_hours = 60
@@ -74,10 +75,10 @@ lr_find = False
 precise_eps = 75
 
 include_time = True
-test_eps = 200
-augment = 'cutout'
+test_eps = 100
+augment = False
 
-datasets = ['fashion_mnist', 'MB', 'MBI', 'MRB', 'MRD', 'MRDBI']
+datasets = ['MRDBI']
 
 for evolve_maxpool in [True, False]:
     if evolve_maxpool:
@@ -87,15 +88,15 @@ for evolve_maxpool in [True, False]:
         
     fitness_cnn = FitnessGrow()    
     c = ChromosomeGrow.random_individual()   
-    experiments_folder = '../../exp_finals_pool' if evolve_maxpool else '../../exp_finals'
+    experiments_folder = '../../experiments/gen20_batch256_pooling' if evolve_maxpool else \
+        '../../experiments/gen20_batch256'
     description = "Grow V2 Maxpool and AvgPool" if evolve_maxpool else "Grow V2"
+    description += "\nFitness calculated with the best validation acc of the last 10 epochs"
     
     experiments_folder = experiments_folder
     os.makedirs(experiments_folder, exist_ok=True)
     for dataset in datasets:
-        if dataset == 'cifar10':
-            test_eps = 200
-            augment = 'cutout'
+
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)
         exp_folder = os.path.join(experiments_folder, dataset)
         folder = os.path.join(exp_folder, 'genetic')
@@ -151,6 +152,6 @@ for evolve_maxpool in [True, False]:
         print(generational.generation)
         print(generational.num_generations)
         if generational.generation < generational.num_generations:
-            winner, best_fit, ranking = generational.evolve()
+            winner, best_fit, ranking = generational.evolve(show=False)
         print("Total elapsed time: %0.3f" % (time() - ti_all))
 
