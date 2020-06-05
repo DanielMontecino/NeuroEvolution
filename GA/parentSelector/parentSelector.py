@@ -5,9 +5,11 @@ import numpy as np
 
 class ParentSelector(object):
 
-    def __init__(self, maximize=True, history={}):
+    def __init__(self, maximize=True, history={}, model_filter=None):
         self.maximize = maximize
         self.history_fitness = history
+        self.model_filter = model_filter
+        self.n_filtered = 0
 
     def set_params(self, maximize, history_fitness, **kwargs):
         self.maximize = maximize
@@ -23,7 +25,7 @@ class ParentSelector(object):
         next_generation = []
         all_parents = []
         for n in range(num_offspring):
-            offspring, parents = self.get_one_offspring(population, rank, show_probs=n == -1)
+            offspring, parents = self.get_one_filtered_offspring(population, rank, show_probs=n == -1)
             next_generation.append(offspring)
             all_parents.append(parents)
         return next_generation, all_parents
@@ -38,6 +40,20 @@ class ParentSelector(object):
                 population[i].fit = self.history_fitness[gen]
             fitness_result[i] = self.history_fitness[gen]
         return sorted(fitness_result.items(), key=operator.itemgetter(1), reverse=self.maximize)
+
+    def get_one_filtered_offspring(self, population, rank, show_probs=False):
+        offspring, (parent1, parent2) = self.get_one_offspring(population, rank, show_probs)
+        if hasattr(self, 'model_filter') and self.model_filter is not None:
+            n_trials = 1
+            while not self.model_filter.is_model_ok(offspring):
+                offspring, (parent1, parent2) = self.get_one_offspring(population, rank, show_probs)
+                n_trials += 1
+                if n_trials % 100 == 0:
+                    print("\nTrying to find a good model candidate. Trial number %d" % n_trials)
+            print("Filtered now: %d" % (n_trials - 1))
+            self.n_filtered += n_trials - 1
+            print("Total filtered until now: %d" % self.n_filtered)
+        return offspring, (parent1, parent2)
 
     def get_one_offspring(self, population, rank, show_probs=False):
         raise NotImplementedError("Not implemented yet!")

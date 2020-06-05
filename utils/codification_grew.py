@@ -7,10 +7,11 @@ from utils.utils import LinearScheduler, EarlyStopByTimeAndAcc
 from utils.codifications import Chromosome
 from utils.codification_cnn import FitnessCNN
 from utils.codification_ops import AbstractGen, Inputs, Operation, CNN, Identity
+from utils.utils import lr_schedule
 
 from keras.layers import PReLU, LeakyReLU, AveragePooling2D
 from keras import Input, Model
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD
 from keras.layers import Conv2D, Dropout, MaxPooling2D, Dense, BatchNormalization, add, GlobalAveragePooling2D
 
 from keras.layers.merge import concatenate
@@ -22,8 +23,8 @@ class HyperParams(AbstractGen):
     _N_CELLS = [1, 2]
     _N_BLOCKS = [2]
     _STEM = [16, 32, 45]
-    _LR_LIMITS = [-9, -1]
-    _MAX_WU = 0.5
+    _LR_LIMITS = [-9, -2]
+    _MAX_WU = 0.2
     mutation_prob = 0.2
     lr = -4.32
     warmup = 0.5
@@ -86,7 +87,7 @@ class HyperParams(AbstractGen):
         if np.random.rand() < self.mutation_prob:
             self.stem = self.choice(self._STEM)
         if np.random.rand() < self.mutation_prob:
-            self.warmup = self.gauss_mutation(self.warmup, self._MAX_WU, 0, int_=False)
+            self.warmup = np.random.rand() * self._MAX_WU
 
     def __repr__(self):
         _, _, _, _, lr, _ = self.decode()
@@ -278,11 +279,15 @@ class CNNGrow(CNN):
         # Return a BN-Dropout-Conv-Activation layer
         x = BatchNormalization()(input_tensor)
         x = Dropout(dropout)(x)
+        if k_size > 3 and True:
+            conv_type = self._conv_type5
+        else:
+            conv_type = self._conv_type
         if activation in ['relu', 'sigmoid', 'tanh', 'elu']:
-            x = self._conv_type(filters, k_size, activation=activation, padding='same', kernel_initializer='he_normal',
+            x = conv_type(filters, k_size, activation=activation, padding='same', kernel_initializer='he_normal',
                                 kernel_regularizer=init)(x)
         else:  # activation == 'prelu':
-            x = self._conv_type(filters, k_size, padding='same', kernel_initializer='he_normal',
+            x = conv_type(filters, k_size, padding='same', kernel_initializer='he_normal',
                                 kernel_regularizer=init)(x)
             x = PReLU()(x)
         return x
@@ -652,13 +657,16 @@ class FitnessGrow(FitnessCNN):
                                    total_steps=total_steps,
                                    warmup_steps=warmup_steps,
                                    verbose=False)
-
+        if self.reduce_plateu:
+            schedule = keras.callbacks.LearningRateScheduler(lr_schedule, verbose=True)
         min_val_acc = (1. / self.num_clases) + 0.1
-        early_stop = EarlyStopByTimeAndAcc(limit_time=360,
+        callbacks = [schedule]
+        if not self.test:
+            early_stop = EarlyStopByTimeAndAcc(limit_time=150,
                                            baseline=min_val_acc,
-                                           patience=10)
-        callbacks = [schedule, early_stop]
-        val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'
+                                           patience=5)
+            callbacks.append(early_stop)
+        val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'        
         if file_model is not None:
             checkpoint_acc = ModelCheckpoint(file_model, monitor=val_acc, save_best_only=True)
             callbacks.append(checkpoint_acc)

@@ -255,6 +255,7 @@ class CNN(Operation):
     act_prob = 0.2
     _type = 'CNN'
     _conv_type = [Conv2D, SeparableConv2D][0]
+    _conv_type5 = [Conv2D, SeparableConv2D][1]
 
     def __init__(self, filter_mul, kernel_size, activation, dropout, **kwargs):
         super().__init__(**kwargs)

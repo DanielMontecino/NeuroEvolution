@@ -6,7 +6,7 @@ import re
 import time
 
 
-def get_random_eraser(p=0.5, s_l=0.02, s_h=0.4, r_1=0.3, r_2=1/0.3, v_l=0, v_h=255, pixel_level=False):
+def get_random_eraser(p=0.5, s_l=0.02, s_h=0.4,  r_1=0.3, r_2=1/0.3, v_l=0, v_h=255, pixel_level=False):
     if pixel_level:
         print("Cutout WITH pixel-level noise")
     else:
@@ -54,16 +54,16 @@ def lr_schedule(epoch):
     # Returns
         lr (float32): learning rate
     """
-    lr = 1e-3
-    if epoch > 180:
-        lr *= 0.5e-3
-    elif epoch > 160:
-        lr *= 1e-3
-    elif epoch > 120:
-        lr *= 1e-2
-    elif epoch > 80:
-        lr *= 1e-1
-    print('Learning rate: ', lr)
+    lr = 0.1
+    if epoch > 150:
+        lr *= 0.1
+    elif epoch > 225:
+        lr *= 0.001
+    #elif epoch > 120:
+    #    lr *= 1e-2
+    #elif epoch > 80:
+    #    lr *= 1e-1
+    #print('Learning rate: ', lr)
     return lr
 
 

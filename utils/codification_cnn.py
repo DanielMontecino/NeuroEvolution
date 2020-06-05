@@ -14,7 +14,7 @@ from keras import Input, Model
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, LearningRateScheduler
 from keras.layers import Conv2D, PReLU, LeakyReLU, Dropout, MaxPooling2D, Flatten, Dense, BatchNormalization
 from keras.models import load_model
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD
 from keras_preprocessing.image import ImageDataGenerator
 from matplotlib import pyplot as plt
 from tensorflow.python.framework.errors_impl import ResourceExhaustedError
@@ -516,6 +516,7 @@ class FitnessCNN(Fitness):
             epochs = self.test_eps
         if self.smooth > 0:
             self.y_train = smooth_labels(self.y_train, self.smooth)
+            
         return epochs
 
     def get_good_lr(self, model, model_file):
@@ -524,8 +525,26 @@ class FitnessCNN(Fitness):
                             batch_size=self.batch_size, epochs=2, num_batches=300, return_model=False)
         return lr
 
+    def test_model(self, model, iterations=100):
+        (x_train, y_train), (x_test, y_test), (x_val, y_val) = self.data
+        datagen = self.get_datagen(test=True)
+        datagen.fit(x_train)
+        n_corrects = 0
+        for i in range(x_test.shape[0]):
+            x = np.expand_dims(x_test[i,...], 0)
+            y = np.argmax(y_test[i, ...])
+            iterator = datagen.flow(x)
+            x_trans = [iterator.next() for _ in range(iterations)]
+            x_trans = np.concatenate(x_trans)
+            all_y = model.predict(x_trans)
+            y_pred = np.argmax(np.max(all_y, axis=0))
+            n_corrects += y_pred == y
+        return n_corrects / x_test.shape[0]
+
+
+
     def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
-        # self.verb = True
+        #self.verb = True
         self.test = test
         epochs = self.get_params(chromosome, precise_mode, test)
         print("Training...", end=" ")
@@ -541,6 +560,10 @@ class FitnessCNN(Fitness):
             model = chromosome.decode(num_classes=self.num_clases, input_shape=self.input_shape,
                                       verb=self.verb, fp=fp)
 
+            if self.reduce_plateu:
+                model.compile(loss='categorical_crossentropy',
+                      optimizer=SGD(),
+                      metrics=['accuracy'])
             if self.find_lr:
                 model.save('temp.hdf5')
                 lr = self.get_good_lr(model, file_model)
@@ -572,10 +595,15 @@ class FitnessCNN(Fitness):
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
                 key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
-                score = 1 - np.max(h.history[key_val_acc][-10::])
+                interval =  epochs // 3
+
+                interval = epochs // 3
+                score = 1 - np.max(h.history[key_val_acc][-interval::])
+                score    += np.std(h.history[key_val_acc][-interval::])
                 if self.include_time:
                     training_time = time() - ti
-                    score += np.log(training_time) / 1000.
+                    score += np.log(training_time / epochs) / 1000
+                   
         except Exception as e:
             score = [1 / self.num_clases, 1. / self.num_clases]
             if isinstance(e, ResourceExhaustedError):

@@ -9,7 +9,7 @@ from utils.codification_grew import FitnessGrow, ChromosomeGrow, HyperParams, Me
 from utils.codification_grew import Inputs, MaxPooling, AvPooling, OperationBlock, CNNGrow, IdentityGrow
 from utils.datamanager import DataManager
 from GA.geneticAlgorithm import TwoLevelGA
-
+from utils.net_classification import ModelFilter
 
 # Chromosome parameters
 ChromosomeGrow._max_initial_blocks = 6
@@ -20,7 +20,7 @@ ChromosomeGrow._decrease_prob = 0.25
 Merger._projection_type = ['normal', 'extend'][1]
 
 HyperParams._GROW_RATE_LIMITS = [2, 4.5]
-HyperParams._N_CELLS = [2]
+HyperParams._N_CELLS = [1, 2]
 HyperParams._N_BLOCKS = [2]
 HyperParams._STEM = [32, 45]
 HyperParams.mutation_prob = 0.2
@@ -62,6 +62,7 @@ maximize_fitness = False
 statistical_validation = False
 frequency_second_level = 3
 start_level2 = 2
+model_filter = ModelFilter('model_filter2', TwoLevelGA)
 
 
 # Fitness params
@@ -77,7 +78,7 @@ cosine_dec = False
 lr_find = False
 precise_eps = 54
 
-include_time = False
+include_time = True
 test_eps = 90
 augment = False
 
@@ -129,31 +130,18 @@ datasets = ['fashion_mnist']
 repetitions = 5
 init = 0
 for n in range(init, init + repetitions):
-    if True:
+    if False:
         OperationBlock._operations = [CNNGrow, IdentityGrow, MaxPooling]
-        description = "Test with 12000 samples, with 10 gens, 30 pop1, 15 pop2. And with maxpooling. Fitness with std and without time"
-        description = "Test mnist with maxpool and evolved parameters"
     else:
         OperationBlock._operations = [CNNGrow, IdentityGrow]
-        description = "Validation with 20 1en, 30 and 15 indvs. And witouth maxpooling. Fitness with std and time"
-
+    generations = 10 - 2 * n
     for dataset in datasets:        
+        description = "Testing %s with filter models and %d generations (using sep conv5)" %(dataset,  generations)
         fitness_cnn = FitnessGrow()    
         c = ChromosomeGrow.random_individual()   
-        #experiments_folder = '../../experiments/fashion_mnist_std/%d' % n
-        experiments_folder = '../../experiments/fashion_mnist_12000samples/%d' % n
-        experiments_folder = '../../experiments/mnist_maxpool_ev_params/%d' % n
-        if dataset == 'fashion_mnist':
-            experiments_folder = '../../experiments/fashion_mnist_std/%d' % 2
-            experiments_folder = '../../experiments/fashion_mnist_12000_DA/%d' % n
-            experiments_folder = '../../experiments/fashion_mnist_sepconv_15000/%d' % n
-            experiments_folder = '../../experiments/fashion_mnist_sepconv/%d' % n
-            augment = False
-            description = 'Training fashion mnist with separable conv 5x5 and 15000 trainval samples'
-        else:
-            experiments_folder = '../../experiments/mnist_maxpool_ev_params/%d' % n
+        experiments_folder = '../../experiments/model_filter_mrdbi/%d' % n
         os.makedirs(experiments_folder, exist_ok=True)
-        
+
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)
         exp_folder = os.path.join(experiments_folder, dataset)
         folder = os.path.join(exp_folder, 'genetic')
@@ -163,10 +151,19 @@ for n in range(init, init + repetitions):
 
         try:
             generational = TwoLevelGA.load_genetic_algorithm(folder=folder)    
+            # Load data
+            num_clases = 100 if dataset == 'cifar100' else 10
+            dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, num_clases=num_clases)  #, max_examples=12000)
+            data = dm.load_data()
+            fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=redu_plat,
+                           epochs=epochs, cosine_decay=cosine_dec, early_stop=early_stop,
+                           warm_epochs=warm_up_epochs, base_lr=base_lr, smooth_label=smooth, find_lr=lr_find,
+                           precise_epochs=precise_eps, include_time=include_time, test_eps=test_eps,  augment=augment)
+
         except:
             # Load data
             num_clases = 100 if dataset == 'cifar100' else 10
-            dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, num_clases=num_clases,  max_examples=15000)
+            dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, num_clases=num_clases)  #,  max_examples=12000)
             data = dm.load_data()
             fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=redu_plat,
                            epochs=epochs, cosine_decay=cosine_dec, early_stop=early_stop, 
@@ -191,7 +188,8 @@ for n in range(init, init + repetitions):
                                       statistical_validation=statistical_validation,
                                       folder=folder,
                                       start_level2=start_level2,
-                                      frequency_second_level=frequency_second_level)
+                                      frequency_second_level=frequency_second_level,
+                                      model_filter=model_filter)
             generational.print_genetic(description)
             generational.print_genetic(params)
 
@@ -205,11 +203,7 @@ for n in range(init, init + repetitions):
         print("\nFinal test")
         print(winner)
         lr = winner.hparams.lr
-        #wu = winner.hparams.warmup
-        # winner.hparams.lr = lr - np.log(5)/np.log(2)
         fitness_cnn.verb = True
-        #winner.hparams.lr = lr
-        # winner.hparams.warmup = 0.1
         
         for eps in [epochs, precise_eps, test_eps]:
             if dataset == 'fashion_mnist':
@@ -241,13 +235,14 @@ for n in range(init, init + repetitions):
             generational.print_genetic("\n\nStem: %d, augment: %s, epochs: %d" %(winner.hparams.stem, aug, fitness_cnn.test_eps))
             generational.print_genetic("Score: %0.4f" % score)
         
-        dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, num_clases=num_clases) #, max_examples=8000)
-        data = dm.load_data()
-        fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=redu_plat,
-                           epochs=epochs, cosine_decay=cosine_dec, early_stop=early_stop,
-                           warm_epochs=warm_up_epochs, base_lr=base_lr, smooth_label=smooth, find_lr=lr_find,
-                           precise_epochs=precise_eps, include_time=include_time, test_eps=test_eps,  augment=augment)
-        fitness_cnn.save(fitness_file)
+       # dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, num_clases=num_clases) #, max_examples=8000)
+       # data = dm.load_data()
+       # fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=redu_plat,
+       #                    epochs=epochs, cosine_decay=cosine_dec, early_stop=early_stop,
+       #                    warm_epochs=warm_up_epochs, base_lr=base_lr, smooth_label=smooth, find_lr=lr_find,
+       #                    precise_epochs=precise_eps, include_time=include_time, test_eps=test_eps,  augment=augment)
+
+       # fitness_cnn.save(fitness_file)
         for aug in [False, True, 'cutout']:
             if dataset != 'fashion_mnist':
                 continue
