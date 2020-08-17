@@ -71,7 +71,7 @@ class RandomSearcher:
             # Files in format: id_Y-M-D-h-m
             id_files = np.array([f.split("_")[0] for f in files], dtype=np.int32)
             filename = files[int(np.argmax(id_files))]
-            filename = os.path.join(folder, filename, 'RS_experiment')
+            filename = os.path.join(folder, filename, 'GA_experiment')
             print("Loading file %s" % filename)
         """ Static access method. """
         infile = open(filename, 'rb')

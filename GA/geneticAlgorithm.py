@@ -16,7 +16,7 @@ class GeneticAlgorithm(object):
     def __init__(self, chromosome, parent_selector, fitness, generations=70, num_population=20,
                  maximize_fitness=True, statistical_validation=True, training_hours=1e3,
                  folder=None, save_progress=True, age_survivors_rate=0.0, precision_val=False,
-                 precision_individuals=5, printn=True, perform_evo=False, model_filter=None):
+                 precision_individuals=5, printn=True, perform_evo=None, model_filter=None):
         '''
         Class to generate a basic Genetic Algorithms.
 
@@ -42,6 +42,7 @@ class GeneticAlgorithm(object):
         self.maximize = maximize_fitness
         self.history = np.empty((self.pop_size, self.num_generations + 1))
         self.history_fitness = {}
+        self.history_test_fitness = {}
         self.best_fit_history = {}
         self.parent_selector.set_params(self.maximize, self.history_fitness)
         self.training_hours = training_hours if training_hours > 0 else 10000
@@ -55,7 +56,10 @@ class GeneticAlgorithm(object):
         self.make_precision_validation = precision_val
         self.N_precision_individuals = precision_individuals
         self.paint = printn
-        self.perfm_evo = [] if perform_evo else None
+        self.perfm_evo = perform_evo
+        if self.perfm_evo is not None:
+            print("WARNING!: perform evo has changed functionanility. Please see the code")
+        self.population_history = {'1-level':{}, '2-level':{}}
         if self.make_precision_validation:
             self.history_precision_fitness = {}
             self.history_precision = np.empty((self.N_precision_individuals, self.num_generations + 1))
@@ -67,7 +71,7 @@ class GeneticAlgorithm(object):
             self.print_genetic("Folder to save: %s" % self.filename)
 
     @staticmethod
-    def load_genetic_algorithm(filename=None, folder=None):
+    def load_genetic_algorithm(filename=None, folder=None, show=True):
         assert (filename, folder) != (None, None)
         if filename is None:
             files = os.listdir(folder)
@@ -75,7 +79,8 @@ class GeneticAlgorithm(object):
             id_files = np.array([f.split("_")[0] for f in files], dtype=np.int32)
             filename = files[int(np.argmax(id_files))]
             filename = os.path.join(folder, filename, 'GA_experiment')
-            print("Loading file %s" % filename)
+            if show:
+                print("Loading file %s" % filename)
         """ Static access method. """
         infile = open(filename, 'rb')
         generational = pickle.load(infile)
@@ -432,7 +437,10 @@ class GenerationalGA(GeneticAlgorithm):
 
     def finishing_evolution(self, show):
         winner, best_fit = self.get_best()
-        fit_test = self.maybe_make_statistical_validation(winner)
+        if winner.__repr__() not in self.history_test_fitness.keys():
+            fit_test = self.maybe_make_statistical_validation(winner)
+            self.history_test_fitness[winner.__repr__()] = fit_test
+        fit_test = self.history_test_fitness[winner.__repr__()]
         self.best_individual['test'] = fit_test
         self.maybe_save_genetic_algorithm()
         self.print_genetic("Best Gen -> \n%s" % winner)
@@ -645,13 +653,16 @@ class TwoLevelGA(GenerationalGA):
                 self.print_genetic(winner.__repr__())
                 break
 
-            if self.perfm_evo is not None:
+            if self.perfm_evo is not None and self.generation in self.perfm_evo:
+                self.print_genetic("\nPerforming intermediate evaluation")
                 _, fit_test = self.finishing_evolution(show=False)
-                self.perfm_evo.append(fit_test)
             
             if self.generation >= self.start_level2:
                 # To show the evolution's progress
                 self.show_progress(self.ranking1, self.ranking2)
+                
+            self.population_history['1-level'][self.generation] = [p.copy() for p in self.population_1]
+            self.population_history['2-level'][self.generation] = [p.copy() for p in self.population_2]
 
 
         #self.generation += 1
@@ -667,7 +678,7 @@ class TwoLevelGA(GenerationalGA):
 
         winner, fit_test = self.finishing_evolution(show=show)
         if self.perfm_evo is not None:
-            return winner, fit_test, self.perfm_evo
+            return winner, fit_test, self.history_test_fitness
         else:
             return winner, fit_test, self.ranking2
 
