@@ -596,8 +596,6 @@ class FitnessCNN(Fitness):
                 score = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             else:
                 key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
-                interval =  epochs // 3
-
                 interval = epochs // 3
                 val_history = np.array(h.history[key_val_acc][-interval::])
                 sorted_ids = np.argsort(val_history)
@@ -619,7 +617,7 @@ class FitnessCNN(Fitness):
                 print(e, "\n")
             keras.backend.clear_session()
             sleep(5)
-            return 1 - score[1]
+            return 1
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
@@ -677,13 +675,15 @@ class FitnessCNNParallel(Fitness):
         return self.eval_list([chromosome], test=test, precise_mode=precise_mode)[0]
 
     class Runnable:
-        def __init__(self, chromosome_file, fitness_file, command, test=False, fp=32, precise_mode=False):
+        def __init__(self, chromosome_file, fitness_file, command, test=False, fp=32, precise_mode=False, file_model=None):
 
             self.com_line = '%s -gf %s -ff %s -fp %d' % (command, chromosome_file, fitness_file, fp)
             if test:
                 self.com_line += " -t %d" % int(test)
             if precise_mode:
                 self.com_line += " -pm %d" % int(precise_mode)
+            if file_model is not None:
+                self.com_line += " -fm %s" % file_model
 
         def run(self):
             args = shlex.split(self.com_line)
@@ -697,12 +697,16 @@ class FitnessCNNParallel(Fitness):
         self.max_gpus = max_gpus
         self.fp = fp
 
-    def eval_list(self, chromosome_list, test=False, precise_mode=False, **kwargs):
+    def eval_list(self, chromosome_list, test=False, precise_mode=False, file_model_list=None, **kwargs):
         filenames = [self.write_chromosome(c, i) for i, c in enumerate(chromosome_list)]
+        if file_model_list is not None:
+            assert len(filenames) == len(file_model_list)
+        else:
+            file_model_list = [None] * len(filenames)
         functions = []
-        for filename in filenames:
+        for file_model, filename in zip(file_model_list, filenames):
             runnable = self.Runnable(filename, self.fitness_file, self.main_line, test=test, fp=self.fp,
-                                     precise_mode=precise_mode)
+                                     precise_mode=precise_mode, file_model=file_model)
             functions.append(runnable.run)
 
         threads_waiting = [threading.Thread(target=f) for f in functions]

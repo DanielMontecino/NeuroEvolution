@@ -20,6 +20,7 @@ parser.add_argument('-fp', '--float_precision', type=int, default=32,
 parser.add_argument('-pm', '--precise_mode', type=bool, default=False,
                     help="Train the gen with a secondary configuration, in order to make a more precise calculation"
                          " of the fitness")
+parser.add_argument('-fm', '--file_model', type=str, default=None, help='file to save trained model')
 
 args = vars(parser.parse_args())
 abs_ti = time()
@@ -40,7 +41,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 training_time = time()
 try:
-    score = fitness.calc(chromosome, test=args['test'], file_model='./model_acc_gpu%d.hdf5' % gpu_id,
+    file_model='./model_acc_gpu%d.hdf5' % gpu_id if args['file_model'] is None else args['file_model']
+    score = fitness.calc(chromosome, test=args['test'], file_model=file_model,
                          fp=args['float_precision'], precise_mode=args['precise_mode'])
 except:
     score = 1
