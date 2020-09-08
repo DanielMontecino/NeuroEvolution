@@ -10,6 +10,7 @@ from utils.codification_grew import Inputs, MaxPooling, AvPooling, OperationBloc
 from utils.datamanager import DataManager
 from GA.geneticAlgorithm import TwoLevelGA
 from utils.net_classification import ModelFilter
+from utils.filter_models import ModelFilterV2
 
 # Chromosome parameters
 ChromosomeGrow._max_initial_blocks = 6
@@ -53,16 +54,17 @@ data_folder = data_folder
 classes = []
 
 # genetic algorithm params:
-generations = 10
-population_first_level = 30
-population_second_level = 15
+generations = 20
+population_first_level = 20
+population_second_level = 8
 training_hours = 48
 save_progress = True
 maximize_fitness = False
 statistical_validation = False
 frequency_second_level = 3
 start_level2 = 2
-model_filter = ModelFilter('model_filter2', TwoLevelGA)
+model_filter = ModelFilterV2('filter_tmp')
+perform_evo = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20] # None
 
 
 # Fitness params
@@ -112,6 +114,7 @@ params += "population second level: %d  \n" % population_second_level
 params += "hours: %d  \n" % training_hours
 params += "frequency second level: %d  \n" % frequency_second_level
 params += "start evaluating second level: %d  \n" % start_level2
+params += "Intermediate evaluations: %s \n" % str(perform_evo)
 
 # Fitness params
 params += "epochs: %d  \n" % epochs
@@ -123,23 +126,19 @@ params += "test epochs: %d \n" % test_eps
 params += "augment: %s  \n" % augment 
 
 
-datasets = ['MB','MBI', 'MRB', 'MRD', 'MRDBI', 'fashion_mnist']
-datasets = ['fashion_mnist']
-datasets = ['MB', 'MRDBI', 'MBI', 'MRB', 'MRD']
-datasets = ['fashion_mnist']
-repetitions = 5
+datasets = ['MRDBI']
+repetitions = 10
 init = 0
 for n in range(init, init + repetitions):
     if False:
         OperationBlock._operations = [CNNGrow, IdentityGrow, MaxPooling]
     else:
         OperationBlock._operations = [CNNGrow, IdentityGrow]
-    generations = 10 - 2 * n
     for dataset in datasets:        
-        description = "Testing %s with filter models and %d generations (using sep conv5)" %(dataset,  generations)
+        description = "Testing %s with filter models and %d generations" %(dataset,  generations)
         fitness_cnn = FitnessGrow()    
         c = ChromosomeGrow.random_individual()   
-        experiments_folder = '../../experiments/model_filter_mrdbi/%d' % n
+        experiments_folder = '../../experiments/model_filter_v4/%d' % n
         os.makedirs(experiments_folder, exist_ok=True)
 
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)
@@ -189,7 +188,8 @@ for n in range(init, init + repetitions):
                                       folder=folder,
                                       start_level2=start_level2,
                                       frequency_second_level=frequency_second_level,
-                                      model_filter=model_filter)
+                                      model_filter=model_filter,
+                                      perform_evo=perform_evo)
             generational.print_genetic(description)
             generational.print_genetic(params)
 

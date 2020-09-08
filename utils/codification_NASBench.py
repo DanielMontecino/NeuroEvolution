@@ -2,6 +2,7 @@ import random
 import numpy as np
 from keras import Input, Model
 from keras.optimizers import Adam
+import os
 
 from utils.codifications import Fitness, Chromosome
 import sys

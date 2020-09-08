@@ -584,17 +584,23 @@ def filter_set(h, fitness_lim=None):
 def make_percentiles(h, divs, div_mode):
     assert div_mode in ['pop', 'fit']
     percentiles_dict = {}
+    max_fit = np.max([h[0][1], h[-1][1]])
+    min_fit = np.min([h[0][1], h[-1][1]])
     for i in range(divs):
         percentiles_dict['b%d' % (i + 1)] = []
+        
     if div_mode == 'pop':
-        divisions = np.linspace(0, len(h), divs + 1)
+        divisions_pop = np.linspace(0, len(h), divs + 1)
         for i in range(len(h)):
-            k_p = np.argmax((i <= divisions[1::]))
+            k_p = np.argmax((i <= divisions_pop[1::]))
             percentiles_dict['b%d' % (k_p + 1)].append(h[i])
+        divisions = [min_fit]
+        for d in percentiles_dict.values():
+            divisions.append(d[-1][1])
+        divisions = np.array(divisions)
 
     else:  # div_mode == 'fit':
-        max_fit = np.max([h[0][1], h[-1][1]])
-        min_fit = np.min([h[0][1], h[-1][1]])
+        
         divisions = np.linspace(min_fit, max_fit, divs + 1)
         for i in range(len(h)):
             fit = h[i][1]
@@ -665,10 +671,20 @@ def get_dict_individuals_from_evolution(dataset, parent_dir, runs, TwoLevelGAObj
     all_h = {}
     all_ph = {}
     for run in runs:
-        genetic_path = os.path.join(parent_dir, str(run), dataset, 'genetic')
-        genetic = TwoLevelGAObject.load_genetic_algorithm(folder=genetic_path)
+        try:
+            genetic_path = os.path.join(parent_dir, str(run), dataset, 'genetic')
+            genetic = TwoLevelGAObject.load_genetic_algorithm(folder=genetic_path, show=False)
+        except FileNotFoundError as e:
+            print(e)
+            genetic_path = os.path.join(parent_dir, str(run), dataset, 'RS')
+            print("Trying with folder: %s" % genetic_path)
+            genetic = TwoLevelGAObject.load_genetic_algorithm(folder=genetic_path)
         h = genetic.history_fitness
         all_h.update(h)
-        h = genetic.history_precision_fitness
-        all_ph.update(h)
+        try:
+            h = genetic.history_precision_fitness
+            all_ph.update(h)
+        except AttributeError as e:
+            print(e)
+            print("loading only first level")
     return all_h, all_ph

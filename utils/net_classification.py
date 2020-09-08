@@ -13,23 +13,23 @@ from sklearn import neighbors
 from utils.evaluation import *
 
 
-def convert_to_classes(yi, divisions, binary=True):
+def convert_to_classes(yi, divisions, binary=True, div_per_class_0=1):
     div = np.hstack([divisions.astype(np.float32)[1::], np.ones((1,))])
     class_yi = np.argmax(yi <= div)
     if binary:
-        return 0 if class_yi == 0 else 1
+        return 0 if class_yi < div_per_class_0 else 1
     else:
         return class_yi
 
 
-def get_Xr_Y(table, divisions, fitness_lim=None, regression=False, binary=True):
+def get_Xr_Y(table, divisions, fitness_lim=None, regression=False, binary=True, divisions_class_0=1):
     if fitness_lim is not None:
         table_ = table[table['error'] < fitness_lim]
     else:
         table_ = table
     Y = table_['error'].to_numpy()
     if not regression:
-        Y = np.array([convert_to_classes(y, divisions, binary=binary) for y in Y])
+        Y = np.array([convert_to_classes(y, divisions, binary=binary, div_per_class_0=divisions_class_0) for y in Y])
     return get_Xr(table_), Y
 
 
@@ -255,7 +255,7 @@ def get_mutual_info_classif(X, y):
     return mutual_info_classif(X, y, random_state=0, n_neighbors=5)
 
 
-def get_selectors_dict(table_):
+def get_selectors_dict(table_=None):
     score_func = {'chi2':chi2, 'F-value':f_classif}
     univariate = {'KBest': SelectKBest}  #  , 'Fpr':SelectFpr,  'Fdr':SelectFdr}
     selectors_dict = {}
@@ -266,7 +266,8 @@ def get_selectors_dict(table_):
             selectors_dict['%s_%s' % (s_name, sf_name)] = SelectorUnivariate(s_builder, sf).func_
 
     #selectors_dict['RandomForest'] = SelectorRF().func_
-    selectors_dict['selector_by_hand'] = SelectorH(table_).func_
+    if table_ is not None:
+        selectors_dict['selector_by_hand'] = SelectorH(table_).func_
     selectors_dict['VarianceThreshold'] = SelectorVariance().func_
     selectors_dict['RFE'] = SelectorRFE().func_
     selectors_dict['RFECV'] = SelectorRFECV().func_
@@ -455,6 +456,7 @@ def evaluate_range_values(Xr, Yc, estimator, get_selector, reps=10, plot=False):
     test_scores_mean = []
     test_scores_std = []
     n_features = get_selector(k=None, X_=Xr, svc=None)
+    print("features :[", end='')
     for i in n_features:
         selector = get_selector(k=i, svc=estimator)
         (train_m, train_s), (test_m, test_s) = evaluate(Xr, Yc, estimator, selector, reps=reps)
@@ -462,6 +464,8 @@ def evaluate_range_values(Xr, Yc, estimator, get_selector, reps=10, plot=False):
         train_scores_std.append(train_s)
         test_scores_mean.append(test_m)
         test_scores_std.append(test_s)
+        print("=", end='')
+    print("]")
 
     train_scores_mean = np.array(train_scores_mean)
     train_scores_std = np.array(train_scores_std)
@@ -585,29 +589,40 @@ def plot_selectors(final_dict, savefig=None):
 
 class ModelFilter:
 
-    def __init__(self, file_to_save, TwoLevelGaObject):
+    def __init__(self, file_to_save, TwoLevelGaObject, data_path='../../experiments/test_validation3', one_level=False, divisions=5, fitness_div=None, n_features=8):
         self.file_to_save = file_to_save
-        self.fitness_lim = 0.1  # 0.107984 if serie == 1 else 0.1
+        self.fitness_lim = None if fitness_div is not None else 0.1   # 0.107984 if serie == 1 else 0.1
+        self.data_path = data_path
+        self.one_level = one_level
+        self.divisions = divisions
+        self.k = n_features
         self.estimator = None
         self.selector = None
         self.table = None
+        self.fitness_div = fitness_div
         self.twolevel = TwoLevelGaObject
         self.create_system()
 
-    def get_data(self, dataset, parent_dir, runs):
+    def get_data(self, dataset, parent_dir, runs=None):
+        #one_level = '54' in parent_dir
+        runs = os.listdir(parent_dir) if runs is None else runs
         sorted_h, sorted_ph = get_sorted_individuals_from_evolutions(dataset, parent_dir, runs, self.twolevel)
         table_h, table_ph = get_sorted_tables(sorted_h=sorted_h, sorted_ph=sorted_ph)
-        self.table = table_ph
+        self.table = table_h if self.one_level else table_ph
+        sorted_ph = sorted_h if self.one_level else sorted_ph
         divisions = self.get_divisions(sorted_ph)
         Xr, Yc = get_Xr_Y(self.table, divisions, fitness_lim=self.fitness_lim, regression=False, binary=True)
+        print(np.sum(Yc), 'positive examples.', len(Yc) - np.sum(Yc), 'negative examples')
         return Xr, Yc
 
     def get_divisions(self, sorted_):
-        div_mode = 'fit'
-        divs = 5
-        h = [s for s in sorted_ if s[1] < self.fitness_lim]
-        percentiles_dict, divisions = make_percentiles(h, divs, div_mode)
-        return divisions
+        if self.fitness_lim is not None:
+            div_mode = 'fit'
+            h = [s for s in sorted_ if s[1] < self.fitness_lim]
+            percentiles_dict, divisions = make_percentiles(h, self.divisions, div_mode)
+            return divisions
+        else:
+            return np.array([0, self.fitness_div])
 
     def evaluate(self, X_, Y_, estimator, selector):
         print(X_.shape)
@@ -630,10 +645,11 @@ class ModelFilter:
         return estimator, selector
 
     def create_system(self):
-        k = 8
-        Xr, Yc = self.get_data('MRDBI', '../../experiments/test_validation3', [0, 1, 2, 3, 4])
+        k = self.k
+        Xr, Yc = self.get_data('MRDBI', self.data_path)
         estimator = SVC(kernel="linear", gamma='auto')
         selector = SelectorRFE()
+        #selector = SelectorH(self.table)
         _ = selector.func_(k=None, X_=Xr, svc=estimator)
         selector = selector.func_(k=k, X_=Xr, svc=estimator)
         self.estimator, self.selector = self.evaluate(Xr, Yc, estimator, selector)
@@ -643,6 +659,11 @@ class ModelFilter:
         x = self.get_features_from_model(model)
         x = self.selector.get_x_from_score(x)
         return self.estimator.predict(x)[0] == 0
+    
+    def get_model_prob(self, model):
+        x = self.get_features_from_model(model)
+        x = self.selector.get_x_from_score(x)
+        return self.estimator.decision_function(x)[0]
 
     def get_features_from_model(self, model):
         b = -1

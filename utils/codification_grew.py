@@ -279,7 +279,7 @@ class CNNGrow(CNN):
         # Return a BN-Dropout-Conv-Activation layer
         x = BatchNormalization()(input_tensor)
         x = Dropout(dropout)(x)
-        if k_size > 3 and True:
+        if k_size > 3 and False:
             conv_type = self._conv_type5
         else:
             conv_type = self._conv_type
