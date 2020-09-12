@@ -112,7 +112,7 @@ params += "generations: %d  \n" % generations
 params += "population first level: %d  \n" % population_first_level
 params += "population second level: %d  \n" % population_second_level
 params += "hours: %d  \n" % training_hours
-params += "frequency second level: %d  \n" % frequency_second_level
+params += "frequency second level: %s  \n" % str(frequency_second_level_list)
 params += "start evaluating second level: %d  \n" % start_level2
 
 # Fitness params
