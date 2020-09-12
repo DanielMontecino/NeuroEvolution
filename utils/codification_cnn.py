@@ -543,7 +543,7 @@ class FitnessCNN(Fitness):
 
 
 
-    def calc(self, chromosome, test=False, file_model='./model_acc.hdf5', fp=32, precise_mode=False):
+    def calc(self, chromosome, test=False, file_model=None, fp=32, precise_mode=False):
         #self.verb = True
         self.test = test
         epochs = self.get_params(chromosome, precise_mode, test)
@@ -551,8 +551,8 @@ class FitnessCNN(Fitness):
         if fp == 16 or fp == 160:
             keras.backend.set_floatx("float16")
             keras.backend.set_epsilon(1e-4)
-        if not test and not self.find_lr:
-            file_model = None
+        if (test or self.find_lr) and file_model is None:
+            file_model = './model_acc.hdf5'
         try:
             ti = time()
             keras.backend.clear_session()

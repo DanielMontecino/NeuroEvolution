@@ -664,7 +664,7 @@ class FitnessGrow(FitnessCNN):
         if not self.test:
             early_stop = EarlyStopByTimeAndAcc(limit_time=150,
                                            baseline=min_val_acc,
-                                           patience=5)
+                                           patience=epochs//2)
             callbacks.append(early_stop)
         val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'        
         if file_model is not None:

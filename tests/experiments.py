@@ -60,9 +60,11 @@ training_hours = 48
 save_progress = True
 maximize_fitness = False
 statistical_validation = False
-frequency_second_level = 3
+# fraquency_secind_level = 3
+frequency_second_level_list = [1, 2, 3, 4, 5, 6]
 start_level2 = 2
-perform_evo = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20] # None
+perform_evo = None  #  [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+
 
 
 # Fitness params
@@ -130,16 +132,17 @@ datasets = ['MRDBI']
 repetitions = 5
 description= "validating TwoLevel GA with evolved params in MRDBI"
 init = 6
+dataset = 'MRDBI'
 for n in range(init, init + repetitions):
     if False:
         OperationBlock._operations = [CNNGrow, IdentityGrow, MaxPooling]
     else:
         OperationBlock._operations = [CNNGrow, IdentityGrow]
 
-    for dataset in datasets:        
+    for frequency_second_level in frequency_second_level_list:        
         fitness_cnn = FitnessGrow()    
         c = ChromosomeGrow.random_individual()   
-        experiments_folder = '../../experiments/intermediate_evaluations/%d' % n
+        experiments_folder = '../../experiments/2nd_level_freq/freq_%d/%d' % (frequency_second_level, n)
         os.makedirs(experiments_folder, exist_ok=True)
         
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)

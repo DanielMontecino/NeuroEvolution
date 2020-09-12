@@ -18,10 +18,10 @@ command = 'python3 ../train_gen.py'
 verbose = 0
 
 dataset = 'MRDBI'
-experiments_folder = '../../../../evolved_data/test_validation3/'
+experiments_folder = '../../experiments/test_validation3/'
 
 gpus = 4
-batch = 50
+batch = 40
 
 # Fitness params
 epochs = 18
@@ -160,18 +160,19 @@ for exp in exps:
     original_filename = generational.filename
     filename = original_filename.split('genetic')[-1]
     generational.filename = folder + filename
-    if not hasattr(generational, 'exhaustive_eval'):
+    if not hasattr(generational,'exhaustive_eval'):
         generational.exhaustive_eval = {}
     
     for k, individual in enumerate(generational.history_fitness.keys()):
         if not individual in generational.exhaustive_eval.keys():
+            print("adding individual %d" % k)
             chromosome = str_to_chromosome(individual)
             file_model = os.path.join(models_folder, "%d.hdf5" % k)
             tmp_dict = {'n':k, 'chromosome':chromosome, 'test':None, 'val':None, 'file_model':file_model}
             generational.exhaustive_eval[individual] = tmp_dict
             
     generational.print_genetic("\n\nStarting exhaustive evaluation.\n\n")
-    generational.print_genetic("Evaluating %d model" % len(generational.exhaustive_eval[individual].keys()))
+    generational.print_genetic("Evaluating %d model" % len(generational.exhaustive_eval.keys()))
     generational.maybe_save_genetic_algorithm()
     
     ti = time()
@@ -182,7 +183,8 @@ for exp in exps:
         if tmp_dict['val'] is not None and os.path.isfile(tmp_dict['file_model']):
             continue
         models_to_eval.append(tmp_dict['chromosome'])        
-        file_models.append(None) #file_models.append(tmp_dict['file_model'])
+        file_models.append(tmp_dict['file_model'])
+        print("Saving at", tmp_dict['file_model'])
         ids.append(tmp_dict['n'])        
         if len(models_to_eval) == batch:
             scores = fitness.eval_list(chromosome_list=models_to_eval, test=False, precise_mode=True,
@@ -210,16 +212,19 @@ for exp in exps:
     # Evaluate test
     
     fitness = FitnessGrow.load(fitness_file)
+    print(type(fitness.data[1][0]), fitness.data[1][0].shape)
+    print(type(fitness.data[1][1]), fitness.data[1][1].shape)
     for indiv in generational.exhaustive_eval.keys():
         tmp_dict = generational.exhaustive_eval[indiv]
         file_model = tmp_dict['file_model']
         model = load_model(file_model)
-        score = 1 - model.evaluate(fitness.x_test, fitness.y_test, verbose=0)[1]
+        score = 1 - model.evaluate(fitness.data[1][0], fitness.data[1][1], verbose=0)[1]
         generational.exhaustive_eval[indiv]['test'] = score
-       
+        print("\nModel N°%d" % tmp_dict['n'])
+        print(indiv)
+        print("Val: %0.2f. Test: %0.2f" % (tmp_dict['val']*100, tmp_dict['test']*100))
+
     generational.print_genetic("Finish in time: %0.2f" % ((time() - ti) / 60))
     generational.filename = original_filename
     generational.maybe_save_genetic_algorithm()
         
-                
-    break
