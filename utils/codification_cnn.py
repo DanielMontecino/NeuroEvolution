@@ -577,7 +577,7 @@ class FitnessCNN(Fitness):
                 datagen = self.get_datagen(test=test)
                 datagen.fit(self.x_train)
                 h = model.fit_generator(datagen.flow(self.x_train, self.y_train, batch_size=self.batch_size),
-                                        validation_data=(self.x_val, self.y_val),
+                        validation_data=(self.x_val, self.y_val),
                                         epochs=epochs, verbose=self.verb, workers=6 if self.test else 4,
                                         callbacks=callbacks,
                                         steps_per_epoch=int(self.x_train.shape[0] / self.batch_size))
@@ -587,7 +587,8 @@ class FitnessCNN(Fitness):
                               epochs=epochs,
                               validation_data=(self.x_val, self.y_val),
                               callbacks=callbacks,
-                              verbose=self.verb)
+                              verbose=self.verb,
+                              shuffle=True)
             if test:
                 # model = load_model(file_model, {'BatchNormalizationF16': BatchNormalizationF16})
                 # model = load_model(file_model)
@@ -598,8 +599,13 @@ class FitnessCNN(Fitness):
                 interval =  epochs // 3
 
                 interval = epochs // 3
-                score = 1 - np.max(h.history[key_val_acc][-interval::])
-                score    += np.std(h.history[key_val_acc][-interval::])
+                val_history = np.array(h.history[key_val_acc][-interval::])
+                sorted_ids = np.argsort(val_history)
+                second_best_id = sorted_ids[-2]
+                score = 1 - val_history[second_best_id]
+
+                #score = 1 - np.max(h.history[key_val_acc][-interval::])
+                #score    += np.std(h.history[key_val_acc][-interval::])
                 if self.include_time:
                     training_time = time() - ti
                     score += np.log(training_time / epochs) / 1000

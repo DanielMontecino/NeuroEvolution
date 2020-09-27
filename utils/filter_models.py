@@ -6,6 +6,7 @@ from GA.geneticAlgorithm import TwoLevelGA
 from GA.random_search import RandomSearcher
 
 import numpy as np
+import pickle
 
 
 # Load data
@@ -140,7 +141,7 @@ def filter_table(table_orig, order_feats, delta=0.05):
 def get_all_results(m, PARENT_DIR, DATASET='MRDBI'):
     dataset_names_ = ['test_validation3', 'validation', 'population_opt']
     dataset_names_18 = ['test_validation3', 'validation', '1level/18_epochs', 
-                     '1level_20gen/18_epochs', 'population_opt', 'random_search/18_epochs']
+                     '1level_20gen/18_epochs', 'population_opt', 'random_search/18_epochs', 'model_filter_v2']
     for dname in dataset_names_18:
         print(dname)
         table_h, table_ph = get_data(DATASET, PARENT_DIR % dname, TwoLevelGA)
@@ -178,11 +179,19 @@ class ModelFilterV2:
     MODEL_PATH = 'filter_tmp'
     
     def __init__(self, load_file=None):
+        self.filters = None
+        self.table_columns = None
         if load_file is None:
-            self.filters, self.table_columns = ModelFilterV2.build_system()
+            filters, table_columns = ModelFilterV2.build_system()
+            self.filters = filters
+            self.table_columns = table_columns
             self.save(ModelFilterV2.MODEL_PATH)
         else:
-            self = self.load(load_file)
+            print("Loading model filter: %s"% os.path.isfile(load_file))
+            copy = ModelFilterV2.load(load_file)
+            self.filters = copy.filters
+            self.table_columns = copy.table_columns
+            del copy
             
     @staticmethod
     def build_system():

@@ -46,7 +46,7 @@ data_folder = '../../datasets/MNIST_variations'
 command = 'python3 ../train_gen.py'
 verbose = 0
 
-gpus = 1
+gpus = 4
 
 
 # dataset params:
@@ -54,21 +54,21 @@ data_folder = data_folder
 classes = []
 
 # genetic algorithm params:
-generations = 5
-population_first_level = 4
-population_second_level = 2
+generations = 20
+population_first_level = 20
+population_second_level = 8
 training_hours = 48
 save_progress = True
 maximize_fitness = False
 statistical_validation = False
-frequency_second_level = 2
-start_level2 = 1
-model_filter = ModelFilterV2()
+frequency_second_level = 3
+start_level2 = 2
+model_filter = ModelFilterV2('filter_tmp')
 perform_evo = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20] # None
 
 
 # Fitness params
-epochs = 2
+epochs = 18
 batch_size = 128
 verbose = verbose
 redu_plat = False
@@ -78,10 +78,10 @@ base_lr = 0.05
 smooth = 0.1
 cosine_dec = False
 lr_find = False
-precise_eps = 4
+precise_eps = 54
 
 include_time = True
-test_eps = 5
+test_eps = 90
 augment = False
 
 params = "\nParameters\n"
@@ -126,9 +126,6 @@ params += "test epochs: %d \n" % test_eps
 params += "augment: %s  \n" % augment 
 
 
-datasets = ['MB','MBI', 'MRB', 'MRD', 'MRDBI', 'fashion_mnist']
-datasets = ['fashion_mnist']
-datasets = ['MB', 'MRDBI', 'MBI', 'MRB', 'MRD']
 datasets = ['MRDBI']
 repetitions = 5
 init = 0
@@ -137,12 +134,11 @@ for n in range(init, init + repetitions):
         OperationBlock._operations = [CNNGrow, IdentityGrow, MaxPooling]
     else:
         OperationBlock._operations = [CNNGrow, IdentityGrow]
-    generations = 10 - 2 * n
     for dataset in datasets:        
-        description = "Testing %s with filter models and %d generations (using sep conv5)" %(dataset,  generations)
+        description = "Testing %s with filter models and %d generations" %(dataset,  generations)
         fitness_cnn = FitnessGrow()    
         c = ChromosomeGrow.random_individual()   
-        experiments_folder = '../../experiments/model_filter_mrdbi/%d' % n
+        experiments_folder = '../../experiments/model_filter_v4/%d' % n
         os.makedirs(experiments_folder, exist_ok=True)
 
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)

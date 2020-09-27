@@ -22,23 +22,30 @@ class RandomSearcher:
         self.history_fitness = {}
         self.elapsed_time = 0
         self.samples = samples
+        self.best_individual = {'winner': None, 'best_fit': None}
 
     def get_best_individual(self):
-        sorted_individuals = sorted(self.history_fitness.items(), key=operator.itemgetter(1), reverse=self.maximize)
-        return sorted_individuals[0]  # best individual, fitness
+        return self.best_individual['winner'], self.best_individual['best_fit']  # best individual, fitness
 
     def next_population(self, samples):
         population = [self.individual.random_individual() for _ in range(samples)]
         return population
 
+    def validate_best(self, population, scores):
+        for indiv, score in zip(population, scores):
+            current_score = self.best_individual['best_fit']
+            if current_score is None or current_score > score:
+                self.best_individual['winner'] = indiv
+                self.best_individual['best_fit'] = score
+
     def evaluate_population(self, population):
-        population_to_eval = [individual for individual in population if individual.__repr__() not in
-                              self.history_fitness.keys()]
-        evaluated_fitness = self.fitness_evaluator.eval_list(population_to_eval)
-        for i in range(len(population_to_eval)):
+        evaluated_fitness = self.fitness_evaluator.eval_list(population)
+        self.validate_best(population, evaluated_fitness)
+        for i in range(len(population)):
             fitness_result = evaluated_fitness[i]
-            individual = population_to_eval[i]
+            individual = population[i]
             self.history_fitness[individual.__repr__()] = fitness_result
+        return evaluated_fitness
 
     def evolve(self):
         while self.stop_condition():
@@ -49,13 +56,16 @@ class RandomSearcher:
             self.elapsed_time += elapsed_time
             self.maybe_save()
             self.println("Elapsed time: %0.1f minutes" % (self.elapsed_time/60))
+            self.println("Models evaluated: %d" % len(list(self.history_fitness.keys())))
             self.println("Best until now:")
             best, fit = self.get_best_individual()
             self.println("Best individual with fitness: %0.3f" % fit)
             self.println("%s" % best)
-
+        print("Training winner individual")
         winner, val_fitness = self.get_best_individual()
-        self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
+        test_score = self.fitness_evaluator.calc(winner, test=True, precise_mode=True)
+        self.println("\nwinner with:  %0.4f (test error), %0.4f (val error)" % (test_score, self.best_individual['best_fit']))
+        return winner, self.best_individual['best_fit'], test_score
 
     def stop_condition(self):
         if self.samples is not None:
