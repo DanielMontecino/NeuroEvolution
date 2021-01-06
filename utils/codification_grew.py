@@ -11,6 +11,7 @@ from utils.utils import lr_schedule
 
 from keras.layers import PReLU, LeakyReLU, AveragePooling2D
 from keras import Input, Model
+from keras.regularizers import l2
 from keras.optimizers import Adam, SGD
 from keras.layers import Conv2D, Dropout, MaxPooling2D, Dense, BatchNormalization, add, GlobalAveragePooling2D
 
@@ -130,7 +131,7 @@ class Merger(AbstractGen):
             return self.projection_normal(input_tensor, n_features)
 
     def projection_normal(self, input_tensor, n_features):
-        init = None  # l2(1e-4)
+        init = l2(1e-5)
         x_ = BatchNormalization()(input_tensor)
         x_ = Conv2D(n_features, 1, padding='same', activation='relu', kernel_initializer='he_normal',
                     kernel_regularizer=init)(x_)
@@ -274,7 +275,7 @@ class CNNGrow(CNN):
         filters = int(self.filter_mul * features_out)
         k_size = self.k_size
         dropout = self.round_dropout(self.dropout)
-        init = None  # l2(1e-4)
+        init = l2(1e-5)
 
         # Return a BN-Dropout-Conv-Activation layer
         x = BatchNormalization()(input_tensor)
@@ -624,8 +625,10 @@ class ChromosomeGrow(Chromosome):
                     input_tensors.append(block.decode(input_tensors, features_out))
                     op_i += 1
                 x = input_tensors[-1]
-
+        x = BatchNormalization()(x)
         x = GlobalAveragePooling2D()(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.1)(x)
         x = Dense(num_classes, activation='softmax')(x)
         model = Model(inputs=inp, outputs=x)
         if verb:
@@ -648,7 +651,7 @@ class ChromosomeGrow(Chromosome):
 class FitnessGrow(FitnessCNN):
 
     def set_callbacks(self, file_model=None, epochs=None):
-        epochs = self.epochs
+        #epochs = self.epochs
         # Create the Learning rate scheduler.
         total_steps = np.round(epochs * self.y_train.shape[0] / self.batch_size).astype(np.int32)
         warmup_steps = np.round(self.warmup_epochs * self.y_train.shape[0] / self.batch_size).astype(np.int32)
@@ -662,21 +665,24 @@ class FitnessGrow(FitnessCNN):
         min_val_acc = (1. / self.num_clases) + 0.1
         callbacks = [schedule]
         if not self.test:
-            early_stop = EarlyStopByTimeAndAcc(limit_time=150,
+            early_stop = EarlyStopByTimeAndAcc(limit_time=900,
                                            baseline=min_val_acc,
                                            patience=epochs//2)
             callbacks.append(early_stop)
         val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'        
         if file_model is not None:
+            return callbacks
             checkpoint_acc = ModelCheckpoint(file_model, monitor=val_acc, save_best_only=True)
             callbacks.append(checkpoint_acc)
         return callbacks
 
     def get_params(self, chromosome, precise_mode=False, test=False):
-        epochs = super().get_params(chromosome, precise_mode, test)
+        #epochs = super().get_params(chromosome, precise_mode, test)
         if hasattr(chromosome, 'learning_rate'):
             self.learning_rate_base = chromosome.learning_rate()
         if hasattr(chromosome, 'warmup_epochs'):
+            epochs = self.epochs
             self.warmup_epochs = chromosome.warmup_epochs(epochs)
-        self.epochs = epochs
+        epochs = super().get_params(chromosome, precise_mode, test)
+        print("epochs: %d. warmup epochs: %d" % (epochs, self.warmup_epochs))
         return epochs

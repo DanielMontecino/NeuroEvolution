@@ -1,3 +1,4 @@
+import traceback
 import argparse
 from utils.utils import verify_free_gpu_memory
 from utils.codifications import Chromosome, Fitness
@@ -45,7 +46,9 @@ try:
     score = fitness.calc(chromosome, test=args['test'], file_model=file_model,
                          fp=args['float_precision'], precise_mode=args['precise_mode'])
 except:
-    score = 1
+    print("Problem in train.py")
+    traceback.print_exc()
+    score = 1.0
 training_time = (time() - training_time) / 60.
 print()
 with open("%s_score" % args['gen_file'], 'w') as f:

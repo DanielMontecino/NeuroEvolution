@@ -12,7 +12,7 @@ from GA.geneticAlgorithm import TwoLevelGA
 
 
 # Chromosome parameters
-ChromosomeGrow._max_initial_blocks = 5
+ChromosomeGrow._max_initial_blocks = 6
 ChromosomeGrow._grow_prob = 0.15
 ChromosomeGrow._decrease_prob = 0.25
 
@@ -20,18 +20,18 @@ ChromosomeGrow._decrease_prob = 0.25
 Merger._projection_type = ['normal', 'extend'][1]
 
 HyperParams._GROW_RATE_LIMITS = [2, 4.5]
-HyperParams._N_CELLS = [1, 2]
+HyperParams._N_CELLS = [2]
 HyperParams._N_BLOCKS = [2]
 HyperParams._STEM = [32, 45]
 HyperParams.mutation_prob = 0.2
-HyperParams._MAX_WU = 0.5
+HyperParams._MAX_WU = 0.4
 HyperParams._LR_LIMITS = [-9, -2] # [-9, -3]
 
 OperationBlock._change_op_prob = 0.15
 OperationBlock._change_concat_prob = 0.15
 CNNGrow.filters_mul_range = [0.2, 1.2]
 CNNGrow.possible_activations = ['relu', 'elu']
-CNNGrow.dropout_range = [0.0, 0.7]
+CNNGrow.dropout_range = [0.0, 0.5]
 CNNGrow.possible_k = [1, 3, 5]
 CNNGrow.k_prob = 0.2
 CNNGrow.drop_prob = 0.2
@@ -56,32 +56,32 @@ classes = []
 generations = 20
 population_first_level = 20
 population_second_level = 8
-training_hours = 48
+training_hours = 100
 save_progress = True
 maximize_fitness = False
 statistical_validation = False
-# fraquency_secind_level = 3
-frequency_second_level_list = [1, 2, 3, 4, 5, 6]
+#fraquency_secind_level = 3
+frequency_second_level_list = [3]  # [1, 2, 3, 4, 5, 6]
 start_level2 = 2
 perform_evo = None  #  [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
 
 
 
 # Fitness params
-epochs = 18
-batch_size = 128
+epochs = 36
+batch_size = 96
 verbose = verbose
 redu_plat = False
 early_stop = 0
 warm_up_epochs = 0
 base_lr = 0.05
-smooth = 0.1
+smooth = 0
 cosine_dec = False
 lr_find = False
-precise_eps = 54
+precise_eps = 108
 
-include_time = True
-test_eps = 90
+include_time = False
+test_eps = 180
 augment = False
 
 params = "\nParameters\n"
@@ -128,13 +128,13 @@ params += "augment: %s  \n" % augment
 datasets = ['MB','MBI', 'MRB', 'MRD', 'MRDBI', 'fashion_mnist']
 datasets = ['fashion_mnist']
 datasets = ['MB', 'MRDBI', 'MBI', 'MRB', 'MRD']
-datasets = ['MRDBI']
+datasets = ['cifar10']
 repetitions = 5
-description= "validating TwoLevel GA with evolved params in MRDBI"
-init = 6
-dataset = 'MRDBI'
+description= "Testing TwoLevel GA with evolved params in Cifar 10"
+init = 0
+dataset = 'cifar10'
 for n in range(init, init + repetitions):
-    if False:
+    if True:
         OperationBlock._operations = [CNNGrow, IdentityGrow, MaxPooling]
     else:
         OperationBlock._operations = [CNNGrow, IdentityGrow]
@@ -142,7 +142,7 @@ for n in range(init, init + repetitions):
     for frequency_second_level in frequency_second_level_list:        
         fitness_cnn = FitnessGrow()    
         c = ChromosomeGrow.random_individual()   
-        experiments_folder = '../../experiments/2nd_level_freq/freq_%d/%d' % (frequency_second_level, n)
+        experiments_folder = '../../experiments/cifar10_reg_smooth0/freq_%d/%d' % (frequency_second_level, n)
         os.makedirs(experiments_folder, exist_ok=True)
         
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)

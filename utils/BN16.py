@@ -1,7 +1,7 @@
 from keras.layers import BatchNormalization, Layer, InputSpec
 from keras import initializers, regularizers, constraints
 from keras import backend as K
-from keras.backend.tensorflow_backend import tf, _regular_normalize_batch_in_training
+#from keras.backend.tensorflow_backend import tf, _regular_normalize_batch_in_training
 
 
 class BatchNormalizationF16(Layer):
@@ -22,6 +22,8 @@ class BatchNormalizationF16(Layer):
                  gamma_constraint=None,
                  **kwargs):
         super(BatchNormalizationF16, self).__init__(**kwargs)
+        print("BN16 not actualized with keras version")
+        raise NotImplementedError
         self.supports_masking = True
         self.axis = axis
         self.momentum = momentum

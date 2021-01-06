@@ -5,6 +5,7 @@ import random
 import shlex
 import subprocess
 import threading
+import traceback
 from time import sleep
 from time import time
 
@@ -599,7 +600,8 @@ class FitnessCNN(Fitness):
                 interval = epochs // 3
                 val_history = np.array(h.history[key_val_acc][-interval::])
                 sorted_ids = np.argsort(val_history)
-                second_best_id = sorted_ids[-2]
+                print(sorted_ids.shape)
+                second_best_id = sorted_ids[-2] if len(sorted_ids)>1 else sorted_ids[-1]
                 score = 1 - val_history[second_best_id]
 
                 #score = 1 - np.max(h.history[key_val_acc][-interval::])
@@ -613,11 +615,12 @@ class FitnessCNN(Fitness):
             if isinstance(e, ResourceExhaustedError):
                 print("ResourceExhaustedError\n")
             else:
+                traceback.print_exc()
                 print("Some Error!")
                 print(e, "\n")
             keras.backend.clear_session()
             sleep(5)
-            return 1
+            return 1.1
         if self.verb:
             score_test = 1 - model.evaluate(self.x_test, self.y_test, verbose=0)[1]
             key_val_acc = [key for key in h.history.keys() if 'val_acc' in key][0]
