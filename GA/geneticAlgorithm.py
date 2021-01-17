@@ -560,6 +560,11 @@ class TwoLevelGA(GenerationalGA):
             self.population_1 = self.population
             self.population_2 = []
             self.print_genetic("%d" % len(self.population_1))
+        if self.history.shape[1] < self.num_generations + 1:
+            extension = np.empty((self.history.shape[0], self.num_generations + 1 - self.history.shape[1]))
+            self.history = np.concatenate([self.history, extension], axis=1)
+            extension = np.empty((self.history_precision.shape[0], self.num_generations + 1 - self.history_precision.shape[1]))
+            self.history_precision = np.concatenate([self.history_precision, extension], axis=1)
 
     def evolve(self, show=True):
         self.initialize_evolution()

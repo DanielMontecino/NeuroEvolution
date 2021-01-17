@@ -10,9 +10,35 @@ from utils.codification_grew import Inputs, MaxPooling, AvPooling, OperationBloc
 from utils.datamanager import DataManager
 from GA.geneticAlgorithm import TwoLevelGA
 
+def get_n_best_str(generational_, N=3):
+    x = generational_.history_precision_fitness
+    a = sorted(x.items(), key=lambda item: item[1])
+    best_str = [a[k][0] for k in range(N)]
+    print("Scores selected:", [a[k][1] for k in range(N)])
+    return best_str
+
+def get_n_best(generational_, N=3):
+    best_str = get_n_best_str(generational_, N)
+    all_gens = generational_.population_history['2-level']
+    winner, best_fit = generational_.get_best()
+    best_n = [winner]
+    added_str = [winner.__repr__()]
+
+    for gen in all_gens.values():
+        for indiv in gen:
+            if indiv.__repr__() not in added_str and indiv.__repr__() in best_str:
+                best_n.append(indiv)
+                added_str.append(indiv.__repr__())
+    return best_n
+
+def get_n_best_from_exp(experiments_folder, N=3, dataset='cifar10'):
+    exp_folder = os.path.join(experiments_folder, dataset)
+    folder = os.path.join(exp_folder, 'genetic')
+    generational = TwoLevelGA.load_genetic_algorithm(folder=folder)
+    return get_n_best(generational, N)
 
 # Chromosome parameters
-ChromosomeGrow._max_initial_blocks = 6
+ChromosomeGrow._max_initial_blocks = 5
 ChromosomeGrow._grow_prob = 0.15
 ChromosomeGrow._decrease_prob = 0.25
 
@@ -24,7 +50,7 @@ HyperParams._N_CELLS = [2]
 HyperParams._N_BLOCKS = [2]
 HyperParams._STEM = [32, 45]
 HyperParams.mutation_prob = 0.2
-HyperParams._MAX_WU = 0.4
+HyperParams._MAX_WU = 0.5
 HyperParams._LR_LIMITS = [-9, -2] # [-9, -3]
 
 OperationBlock._change_op_prob = 0.15
@@ -53,7 +79,7 @@ data_folder = data_folder
 classes = []
 
 # genetic algorithm params:
-generations = 20
+generations = 30
 population_first_level = 20
 population_second_level = 8
 training_hours = 100
@@ -82,7 +108,7 @@ precise_eps = 108
 
 include_time = False
 test_eps = 180
-augment = False
+augment = True
 
 params = "\nParameters\n"
 
@@ -130,7 +156,7 @@ datasets = ['fashion_mnist']
 datasets = ['MB', 'MRDBI', 'MBI', 'MRB', 'MRD']
 datasets = ['cifar10']
 repetitions = 5
-description= "Testing TwoLevel GA with evolved params in Cifar 10"
+description= "Intialization of population with previous best individuals"
 init = 0
 dataset = 'cifar10'
 for n in range(init, init + repetitions):
@@ -142,7 +168,7 @@ for n in range(init, init + repetitions):
     for frequency_second_level in frequency_second_level_list:        
         fitness_cnn = FitnessGrow()    
         c = ChromosomeGrow.random_individual()   
-        experiments_folder = '../../experiments/cifar10_reg_smooth0/freq_%d/%d' % (frequency_second_level, n)
+        experiments_folder = '../../experiments/cifar10_init_pop_DA/freq_%d/%d' % (frequency_second_level, n)
         os.makedirs(experiments_folder, exist_ok=True)
         
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)
@@ -154,10 +180,11 @@ for n in range(init, init + repetitions):
 
         try:
             generational = TwoLevelGA.load_genetic_algorithm(folder=folder)    
+            generational.num_generations = generations
         except:
             # Load data
             num_clases = 100 if dataset == 'cifar100' else 10
-            dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, num_clases=num_clases)  #,  max_examples=15000)
+            dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, train_split=0.8, num_clases=num_clases, normalize=True)  #,  max_examples=15000)
             data = dm.load_data()
             fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=redu_plat,
                            epochs=epochs, cosine_decay=cosine_dec, early_stop=early_stop, 
@@ -184,6 +211,15 @@ for n in range(init, init + repetitions):
                                       start_level2=start_level2,
                                       frequency_second_level=frequency_second_level,
                                       perform_evo=perform_evo)
+            base_folder = '../../experiments/cifar10_%s/freq_3/0'
+            exps = ['reg_smooth0', 'reg_smooth0_45k_DA']
+            exps_folder = [base_folder % exp for exp in exps]
+            init_indivs = []
+            for exp_folder in exps_folder:
+                init_indivs += get_n_best_from_exp(exp_folder, N=4)
+            generational.initialize_evolution()
+            generational.population_1[0:len(init_indivs)] = init_indivs
+
             generational.print_genetic(description)
             generational.print_genetic(params)
 
@@ -199,7 +235,7 @@ for n in range(init, init + repetitions):
         print(winner)
         fitness_cnn.verb = True
         
-        for eps in [precise_eps, test_eps]:
+        for eps in [precise_eps,  test_eps]:
             if dataset == 'fashion_mnist':
                 continue
             fitness_cnn.test_eps = eps
@@ -219,7 +255,7 @@ for n in range(init, init + repetitions):
                 score = generational.fitness_evaluator.calc(winner, test=True)
                 generational.print_genetic("\n\nCells: %d, Stem: %d" %(cells, stem))
                 generational.print_genetic("Score: %0.4f" % score)
-        for aug in [True, 'cutout']:
+        for aug in ['cutout', False]:
             continue
             #winner.hparams.stem = 32
             #winner.hparams.n_cells = 
@@ -230,8 +266,8 @@ for n in range(init, init + repetitions):
             generational.print_genetic("Score: %0.4f" % score)
         
     
-        for aug in [False, True, 'cutout']:
-            if dataset != 'fashion_mnist':
+        for aug in ['cutout', False, True]:
+            if dataset != 'cifar10':
                 continue
             #winner.hparams.stem = 32
             #winner.hparams.n_cells = 

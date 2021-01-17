@@ -63,13 +63,15 @@ class DataManager(object):
             x_test = x_test.astype('float32')
 
         if self.normalize:
-            mean, std = np.mean(x_train), np.std(x_train)
+            mean, std = np.mean(x_train, axis=(0, 1, 2)), np.std(x_train, axis=(0, 1, 2))
             x_train = (x_train - mean) / std
             x_test = (x_test - mean) / std
         else:
             max_value = np.max(x_train)
-            x_train = x_train / max_value
-            x_test = x_test / max_value
+            mean_value = np.mean(x_train)
+            x_train = (x_train - mean_value) / max_value
+            x_test = (x_test - mean_value) / max_value
+
         y_train = [int(label) for label in y_train]
         y_test  = [int(label) for label in y_test]
         y_train, y_test = self.encode(y_train, y_test)

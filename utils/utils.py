@@ -311,10 +311,13 @@ class EarlyStopByTimeAndAcc(keras.callbacks.Callback):
         self.epochs_without_improve = 0
         self.verbose = verbose
         self.learning_rates = []
-        self.initial_time = 0
+        self.initial_time = None
 
     def on_epoch_end(self, batch, logs=None):
         # Verifying if the batch processing took to much time
+        if self.initial_time is None:
+            self.initial_time = time.time()
+            return
         elapsed_batch_time = time.time() - self.initial_time
         if elapsed_batch_time > self.limit_time:
             self.model.stop_training = True
@@ -336,7 +339,8 @@ class EarlyStopByTimeAndAcc(keras.callbacks.Callback):
             return
 
     def on_epoch_begin(self, batch, logs=None):
-        self.initial_time = time.time()
+        if self.initial_time is not None:
+            self.initial_time = time.time()
 
 
 def smooth_labels(y, smooth_factor):

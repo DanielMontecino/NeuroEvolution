@@ -641,9 +641,9 @@ class FitnessCNN(Fitness):
             print("Without cutout augmentation")
         return ImageDataGenerator(
                     # featurewise_center=True,
-                    width_shift_range=4,
-                    height_shift_range=4,
-                    #fill_mode='constant',
+                    width_shift_range=5,
+                    height_shift_range=5,
+                    fill_mode='nearest',
                     horizontal_flip=True,
                     rotation_range=0,
                     preprocessing_function=prep_function)

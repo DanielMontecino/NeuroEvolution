@@ -131,7 +131,7 @@ class Merger(AbstractGen):
             return self.projection_normal(input_tensor, n_features)
 
     def projection_normal(self, input_tensor, n_features):
-        init = l2(1e-5)
+        init = l2(1e-6)
         x_ = BatchNormalization()(input_tensor)
         x_ = Conv2D(n_features, 1, padding='same', activation='relu', kernel_initializer='he_normal',
                     kernel_regularizer=init)(x_)
@@ -275,7 +275,7 @@ class CNNGrow(CNN):
         filters = int(self.filter_mul * features_out)
         k_size = self.k_size
         dropout = self.round_dropout(self.dropout)
-        init = l2(1e-5)
+        init = l2(1e-6)
 
         # Return a BN-Dropout-Conv-Activation layer
         x = BatchNormalization()(input_tensor)
@@ -656,7 +656,7 @@ class FitnessGrow(FitnessCNN):
         total_steps = np.round(epochs * self.y_train.shape[0] / self.batch_size).astype(np.int32)
         warmup_steps = np.round(self.warmup_epochs * self.y_train.shape[0] / self.batch_size).astype(np.int32)
         schedule = LinearScheduler(max_lr=self.learning_rate_base,
-                                   min_lr=0.00002,
+                                   min_lr=0.000005,
                                    total_steps=total_steps,
                                    warmup_steps=warmup_steps,
                                    verbose=False)
@@ -665,9 +665,10 @@ class FitnessGrow(FitnessCNN):
         min_val_acc = (1. / self.num_clases) + 0.1
         callbacks = [schedule]
         if not self.test:
-            early_stop = EarlyStopByTimeAndAcc(limit_time=900,
+            early_stop = EarlyStopByTimeAndAcc(limit_time=300,
                                            baseline=min_val_acc,
-                                           patience=epochs//2)
+                                           patience=10,
+                                           verbose=True)
             callbacks.append(early_stop)
         val_acc = 'val_accuracy' if keras.__version__ == '2.3.1' else 'val_acc'        
         if file_model is not None:
