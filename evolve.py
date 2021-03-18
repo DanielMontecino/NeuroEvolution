@@ -2,7 +2,7 @@ import os
 from time import time
 import numpy as np
 import sys
-sys.path.append('../')
+sys.path.append('/')
 
 from utils.codification_cnn import FitnessCNNParallel
 from utils.codification_grew import FitnessGrow, ChromosomeGrow, HyperParams, Merger
