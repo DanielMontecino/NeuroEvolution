@@ -3,6 +3,8 @@ import numpy as np
 
 import keras
 from keras.callbacks import ModelCheckpoint
+
+from config import config
 from utils.utils import LinearScheduler, EarlyStopByTimeAndAcc
 from utils.codifications import Chromosome
 from utils.codification_cnn import FitnessCNN
@@ -19,13 +21,13 @@ from keras.layers.merge import concatenate
 
 class HyperParams(AbstractGen):
     _type = "HyperParams"
-    _GROW_RATE_LIMITS = [2., 5.]
-    _N_CELLS = [1, 2]
-    _N_BLOCKS = [2]
-    _STEM = [16, 32, 45]
-    _LR_LIMITS = [-9, -2]
-    _MAX_WU = 0.2
-    mutation_prob = 0.2
+    _GROW_RATE_LIMITS = config.GROW_RATE_LIMITS
+    _N_CELLS = config.N_CELLS
+    _N_BLOCKS = config.N_BLOCKS
+    _STEM = config.STEM
+    _LR_LIMITS = config.LR_LIMITS
+    _MAX_WU = config.MAX_WU
+    mutation_prob = config.hp_mutation_prob
     lr = -4.32
     warmup = 0.5
 
@@ -100,7 +102,7 @@ class HyperParams(AbstractGen):
 
 class Merger(AbstractGen):
     _type = "Merge"
-    _projection_type = ['normal', 'extend', 'zero-pad'][1]
+    _projection_type = config.projection_type  # ['normal', 'extend', 'zero-pad'][1]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -279,7 +281,7 @@ class CNNGrow(CNN):
         # Return a BN-Dropout-Conv-Activation layer
         x = BatchNormalization()(input_tensor)
         x = Dropout(dropout)(x)
-        if k_size > 3 and True:
+        if k_size > 3 and False:
             conv_type = self._conv_type5
         else:
             conv_type = self._conv_type
@@ -294,12 +296,12 @@ class CNNGrow(CNN):
 
 
 class OperationBlock(AbstractGen):
-    _operations = [CNNGrow, IdentityGrow]  # , MaxPooling, AvPooling]
+    _operations = config.operations  # [CNNGrow, IdentityGrow, MaxPooling]
     _mergers = [Concatenation, Sum]
     _inputs = Inputs
 
-    _change_op_prob = 0.1
-    _change_concat_prob = 0.1
+    _change_op_prob = config.change_op_prob
+    _change_concat_prob = config.change_concat_prob
 
     def __init__(self, operation_type, ops, concatenation, inputs):
         super().__init__()
@@ -393,12 +395,12 @@ class OperationBlock(AbstractGen):
 
 
 class ChromosomeGrow(Chromosome):
-    _max_initial_blocks = 4
+    _max_initial_blocks = config.max_initial_blocks
     _block = OperationBlock
     _HYPERPARAMS = HyperParams
 
-    _grow_prob = 0.15
-    _decrease_prob = 0.25
+    _grow_prob = config.grow_prob
+    _decrease_prob = config.decrease_prob
 
     def __init__(self, blocks, n_blocks, hparams):
         assert isinstance(blocks, list)

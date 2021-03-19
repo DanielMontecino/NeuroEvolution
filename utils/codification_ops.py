@@ -1,5 +1,7 @@
 import random
 import numpy as np
+
+from config import config
 from utils.codifications import Chromosome
 from utils.codification_cnn import ChromosomeCNN
 from utils.codifications import Layer
@@ -59,7 +61,7 @@ class AbstractGen:
 
 class Inputs(AbstractGen):
     _type = "Inputs"
-    _mutate_prob = 0.5
+    _mutate_prob = config.inputs_mutate_prob
 
     def __init__(self, inputs_array, **kwargs):
         super().__init__(**kwargs)
@@ -242,17 +244,17 @@ class MaxPooling(Operation):
 
 
 class CNN(Operation):
-    possible_activations = ['relu', 'elu', 'prelu']
-    filters_mul_range = [0.5, 1.2]
-    dropout_range = [0, 0.7]
+    possible_activations = config.possible_activations ['relu', 'elu', 'prelu']
+    filters_mul_range = config.filters_mul_range
+    dropout_range = config.dropout_range
     _dropout_precision = 0.05
     _possible_drops = np.arange(dropout_range[0], dropout_range[1] + 1e-7, _dropout_precision)
     # possible_k = [1, 3, 5, 7]
-    possible_k = [1, 3, 5]
-    k_prob = 0.2
-    drop_prob = 0.2
-    filter_prob = 0.2
-    act_prob = 0.2
+    possible_k = config.possible_k
+    k_prob = config.k_prob
+    drop_prob = config.drop_prob
+    filter_prob = config.filter_prob
+    act_prob = config.act_prob
     _type = 'CNN'
     _conv_type = [Conv2D, SeparableConv2D][0]
     _conv_type5 = [Conv2D, SeparableConv2D][1]

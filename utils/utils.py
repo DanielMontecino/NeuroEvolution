@@ -1,9 +1,14 @@
+import os
+
 import numpy as np
 import keras
 from keras import backend as K
 import subprocess
 import re
 import time
+
+from GA.geneticAlgorithm import TwoLevelGA
+from utils.codification_grew import ChromosomeGrow, Merger, HyperParams, OperationBlock, CNNGrow
 
 
 def get_random_eraser(p=0.5, s_l=0.02, s_h=0.4,  r_1=0.3, r_2=1/0.3, v_l=0, v_h=255, pixel_level=False):
@@ -428,3 +433,74 @@ def verify_free_gpu_memory(min_frac=0.8):
         print("Waiting for a GPU... free memory fractions: %0.4f" % max_frac)
         return False, -1
     return True, id
+
+
+def get_n_best_str(generational_, N=3):
+    x = generational_.history_precision_fitness
+    a = sorted(x.items(), key=lambda item: item[1])
+    best_str = [a[k][0] for k in range(N)]
+    print("Scores selected:", [a[k][1] for k in range(N)])
+    return best_str
+
+
+def get_n_best(generational_, N=3):
+    best_str = get_n_best_str(generational_, N)
+    all_gens = generational_.population_history['2-level']
+    winner, best_fit = generational_.get_best()
+    best_n = [winner]
+    added_str = [winner.__repr__()]
+
+    for gen in all_gens.values():
+        for indiv in gen:
+            if indiv.__repr__() not in added_str and indiv.__repr__() in best_str:
+                best_n.append(indiv)
+                added_str.append(indiv.__repr__())
+    return best_n
+
+
+def get_n_best_from_exp(experiments_folder, N=3, dataset='cifar10'):
+    exp_folder = os.path.join(experiments_folder, dataset)
+    folder = os.path.join(exp_folder, 'genetic')
+    generational = TwoLevelGA.load_genetic_algorithm(folder=folder)
+    return get_n_best(generational, N)
+
+
+def get_param_description(generations, population_first_level, population_second_level, epochs, batch_size, smooth,
+                          precise_eps, include_time, test_eps, augment):
+    params = "\nParameters\n"
+
+    params += "initial blocks: %d  \n" % ChromosomeGrow._max_initial_blocks
+    params += "grow prob: %0.2f  \n" % ChromosomeGrow._grow_prob
+    params += "decrease prob: %0.2f  \n" % ChromosomeGrow._decrease_prob
+    params += "projection: %s  \n" % Merger._projection_type
+    params += "grow rate limits: %s  \n" % HyperParams._GROW_RATE_LIMITS
+    params += "n cells: %s  \n" % HyperParams._N_CELLS
+    params += "n blocks: %s  \n" % HyperParams._N_BLOCKS
+    params += "stems: %s  \n" % HyperParams._STEM
+    params += "hyperparam mutation prob: %0.2f  \n" % HyperParams.mutation_prob
+    params += "change op prob: %0.2f  \n" % OperationBlock._change_op_prob
+    params += "change concat prob: %0.2f  \n" % OperationBlock._change_concat_prob
+    params += "learning rate limits: %s\n" % HyperParams._LR_LIMITS
+    params += "filters range: %s  \n" % CNNGrow.filters_mul_range
+    params += "activations: %s  \n" % CNNGrow.possible_activations
+    params += "dropout range: %s  \n" % CNNGrow.dropout_range
+    params += "possible kernels sizes: %s  \n" % CNNGrow.possible_k
+    params += "kernel mutation prob: %0.2f  \n" % CNNGrow.k_prob
+    params += "dropout mutation prob: %0.2f  \n" % CNNGrow.drop_prob
+    params += "filter mutation prob: %0.2f  \n" % CNNGrow.filter_prob
+    params += "activation mutation prob: %0.2f  \n" % CNNGrow.act_prob
+
+    # genetic algorithm params:
+    params += "generations: %d  \n" % generations
+    params += "population first level: %d  \n" % population_first_level
+    params += "population second level: %d  \n" % population_second_level
+
+    # Fitness params
+    params += "epochs: %d  \n" % epochs
+    params += "batch8 size: %d  \n" % batch_size
+    params += "smooth: %0.2f  \n" % smooth
+    params += "precise epochs: %0.2f  \n" % precise_eps
+    params += "include time: %s  \n" % include_time
+    params += "test epochs: %d \n" % test_eps
+    params += "augment: %s  \n" % augment
+    return params

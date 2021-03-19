@@ -1,194 +1,89 @@
 import os
 from time import time
-import numpy as np
 import sys
-sys.path.append('../')
+import argparse
+from config import config
+from utils.utils import get_param_description
+#sys.path.append('../')
 
 from utils.codification_cnn import FitnessCNNParallel
-from utils.codification_grew import FitnessGrow, ChromosomeGrow, HyperParams, Merger
-from utils.codification_grew import Inputs, MaxPooling, AvPooling, OperationBlock, CNNGrow, IdentityGrow
+from utils.codification_grew import FitnessGrow, ChromosomeGrow
 from utils.datamanager import DataManager
 from GA.geneticAlgorithm import TwoLevelGA
 
-def get_n_best_str(generational_, N=3):
-    x = generational_.history_precision_fitness
-    a = sorted(x.items(), key=lambda item: item[1])
-    best_str = [a[k][0] for k in range(N)]
-    print("Scores selected:", [a[k][1] for k in range(N)])
-    return best_str
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description='''Evolving 2LGA.''')
+    parser.add_argument('--generations', type=int, default=20)
+    parser.add_argument('--pop_1l', type=int, default=20, help='population of the first the level')
+    parser.add_argument('--pop_2l', type=int, default=8, help='population of the second the level')
+    parser.add_argument('--freq_2l', type=int, default=3, help='frequency of second level evaluation')
+    parser.add_argument('--eps_1l', type=int, default=18, help='epochs to train the first level population')
+    parser.add_argument('--eps_2l', type=int, default=54, help='epochs to train the second level population')
+    parser.add_argument('--eps_test', type=int, default=90, help='epochs to train the winner individual')
+    parser.add_argument('--batch-size', type=int, default=96)
+    parser.add_argument('--data-aug', type=bool, default=False, help='If use random flip and random crop in the '
+                                                                     'evolution and test')
+    parser.add_argument('--time', type=bool, default=True, help='If include a time component in fitness')
+    parser.add_argument('--runs', type=int, default=5, help='number of independent evolutions to perform')
+    parser.add_argument('--dataset', type=str, default='MRDBI', help='dataset to evolve ')
+    parser.add_argument('--gpus', type=int, default=4, help='gpus to use in parallel')
+    parser.add_argument('--verb', type=bool, default=True, help='If show progress and each individual scoring')
+    parser.add_argument('--exp_folder', type=str, default='./experiments/', help='path to save progress')
 
-def get_n_best(generational_, N=3):
-    best_str = get_n_best_str(generational_, N)
-    all_gens = generational_.population_history['2-level']
-    winner, best_fit = generational_.get_best()
-    best_n = [winner]
-    added_str = [winner.__repr__()]
+    args = parser.parse_args()
 
-    for gen in all_gens.values():
-        for indiv in gen:
-            if indiv.__repr__() not in added_str and indiv.__repr__() in best_str:
-                best_n.append(indiv)
-                added_str.append(indiv.__repr__())
-    return best_n
+    generations = args.generations
+    population_first_level = args.pop_1l
+    population_second_level = args.pop_2l
+    frequency_second_level = args.freq_2l
 
-def get_n_best_from_exp(experiments_folder, N=3, dataset='cifar10'):
-    exp_folder = os.path.join(experiments_folder, dataset)
-    folder = os.path.join(exp_folder, 'genetic')
-    generational = TwoLevelGA.load_genetic_algorithm(folder=folder)
-    return get_n_best(generational, N)
+    # Fitness params
+    epochs = args.eps_1l
+    batch_size = args.batch_size
+    smooth = config.smooth_label
+    precise_eps = args.eps_2l
+    test_eps = args.eps_test
+    include_time = args.time
+    augment = args.data_aug
 
-# Chromosome parameters
-ChromosomeGrow._max_initial_blocks = 5
-ChromosomeGrow._grow_prob = 0.15
-ChromosomeGrow._decrease_prob = 0.25
+    repetitions = args.runs
+    dataset = args.dataset
+    verbose = args.verb
+    gpus = args.gpus
+    exp_folder = args.exp_folder
 
+    data_folder = './MNIST_variations'
+    os.makedirs(data_folder, exist_ok=True)
 
-Merger._projection_type = ['normal', 'extend'][1]
+    params = get_param_description(generations, population_first_level, population_second_level, epochs, batch_size,
+                                   smooth, precise_eps, include_time, test_eps, augment)
 
-HyperParams._GROW_RATE_LIMITS = [2, 4.5]
-HyperParams._N_CELLS = [2]
-HyperParams._N_BLOCKS = [2]
-HyperParams._STEM = [32, 45]
-HyperParams.mutation_prob = 0.2
-HyperParams._MAX_WU = 0.5
-HyperParams._LR_LIMITS = [-9, -2] # [-9, -3]
-
-OperationBlock._change_op_prob = 0.15
-OperationBlock._change_concat_prob = 0.15
-CNNGrow.filters_mul_range = [0.2, 1.2]
-CNNGrow.possible_activations = ['relu', 'elu']
-CNNGrow.dropout_range = [0.0, 0.5]
-CNNGrow.possible_k = [1, 3, 5]
-CNNGrow.k_prob = 0.2
-CNNGrow.drop_prob = 0.2
-CNNGrow.filter_prob = 0.2
-CNNGrow.act_prob = 0.23
-
-Inputs._mutate_prob = 0.3
-
-    
-data_folder = '../../datasets/MNIST_variations'
-command = 'python3 ../train_gen.py'
-verbose = 0
-
-gpus = 4
-
-
-# dataset params:
-data_folder = data_folder
-classes = []
-
-# genetic algorithm params:
-generations = 30
-population_first_level = 20
-population_second_level = 8
-training_hours = 100
-save_progress = True
-maximize_fitness = False
-statistical_validation = False
-#fraquency_secind_level = 3
-frequency_second_level_list = [3]  # [1, 2, 3, 4, 5, 6]
-start_level2 = 2
-perform_evo = None  #  [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
-
-
-
-# Fitness params
-epochs = 36
-batch_size = 96
-verbose = verbose
-redu_plat = False
-early_stop = 0
-warm_up_epochs = 0
-base_lr = 0.05
-smooth = 0
-cosine_dec = False
-lr_find = False
-precise_eps = 108
-
-include_time = False
-test_eps = 180
-augment = True
-
-params = "\nParameters\n"
-
-params += "initial blocks: %d  \n" % ChromosomeGrow._max_initial_blocks
-params += "grow prob: %0.2f  \n" % ChromosomeGrow._grow_prob
-params += "decrease prob: %0.2f  \n" % ChromosomeGrow._decrease_prob
-params += "projection: %s  \n" % Merger._projection_type
-params += "grow rate limits: %s  \n" % HyperParams._GROW_RATE_LIMITS
-params += "n cells: %s  \n" % HyperParams._N_CELLS
-params += "n blocks: %s  \n" % HyperParams._N_BLOCKS
-params += "stems: %s  \n" % HyperParams._STEM
-params += "hyperparam mutation prob: %0.2f  \n" % HyperParams.mutation_prob
-params += "change op prob: %0.2f  \n" % OperationBlock._change_op_prob
-params += "change concat prob: %0.2f  \n" % OperationBlock._change_concat_prob
-params += "learning rate limits: %s\n" % HyperParams._LR_LIMITS
-params += "filters range: %s  \n" % CNNGrow.filters_mul_range
-params += "activations: %s  \n" % CNNGrow.possible_activations
-params += "dropout range: %s  \n" % CNNGrow.dropout_range
-params += "possible kernels sizes: %s  \n" % CNNGrow.possible_k
-params += "kernel mutation prob: %0.2f  \n" % CNNGrow.k_prob
-params += "dropout mutation prob: %0.2f  \n" % CNNGrow.drop_prob
-params += "filter mutation prob: %0.2f  \n" % CNNGrow.filter_prob
-params += "activation mutation prob: %0.2f  \n" % CNNGrow.act_prob
-
-# genetic algorithm params:
-params += "generations: %d  \n" % generations
-params += "population first level: %d  \n" % population_first_level
-params += "population second level: %d  \n" % population_second_level
-params += "hours: %d  \n" % training_hours
-params += "frequency second level: %s  \n" % str(frequency_second_level_list)
-params += "start evaluating second level: %d  \n" % start_level2
-
-# Fitness params
-params += "epochs: %d  \n" % epochs
-params += "batch8 size: %d  \n" % batch_size
-params += "smooth: %0.2f  \n" % smooth
-params += "precise epochs: %0.2f  \n" % precise_eps
-params += "include time: %s  \n" % include_time 
-params += "test epochs: %d \n" % test_eps 
-params += "augment: %s  \n" % augment 
-
-
-datasets = ['MB','MBI', 'MRB', 'MRD', 'MRDBI', 'fashion_mnist']
-datasets = ['fashion_mnist']
-datasets = ['MB', 'MRDBI', 'MBI', 'MRB', 'MRD']
-datasets = ['cifar10']
-repetitions = 5
-description= "Intialization of population with previous best individuals"
-init = 0
-dataset = 'cifar10'
-for n in range(init, init + repetitions):
-    if True:
-        OperationBlock._operations = [CNNGrow, IdentityGrow, MaxPooling]
-    else:
-        OperationBlock._operations = [CNNGrow, IdentityGrow]
-
-    for frequency_second_level in frequency_second_level_list:        
-        fitness_cnn = FitnessGrow()    
-        c = ChromosomeGrow.random_individual()   
-        experiments_folder = '../../experiments/cifar10_init_pop_DA/freq_%d/%d' % (frequency_second_level, n)
+    for n in range(repetitions):
+        fitness_cnn = FitnessGrow()
+        c = ChromosomeGrow.random_individual()
+        experiments_folder = os.path.join(exp_folder, "run_{}".format(n))
         os.makedirs(experiments_folder, exist_ok=True)
-        
+
         print("\nEVOLVING IN DATASET %s ...\n" % dataset)
         exp_folder = os.path.join(experiments_folder, dataset)
         folder = os.path.join(exp_folder, 'genetic')
         fitness_folder = exp_folder
-        fitness_file = os.path.join(fitness_folder, 'fitness_example')   
+        fitness_file = os.path.join(fitness_folder, 'fitness_example')
         os.makedirs(folder, exist_ok=True)
 
         try:
-            generational = TwoLevelGA.load_genetic_algorithm(folder=folder)    
+            generational = TwoLevelGA.load_genetic_algorithm(folder=folder)
             generational.num_generations = generations
         except:
             # Load data
             num_clases = 100 if dataset == 'cifar100' else 10
-            dm = DataManager(dataset, clases=classes, folder_var_mnist=data_folder, train_split=0.8, num_clases=num_clases, normalize=True)  #,  max_examples=15000)
+            dm = DataManager(dataset, clases=[], folder_var_mnist=data_folder, train_split=0.8, num_clases=num_clases,
+                             normalize=True)  #,  max_examples=15000)
             data = dm.load_data()
-            fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=redu_plat,
-                           epochs=epochs, cosine_decay=cosine_dec, early_stop=early_stop, 
-                           warm_epochs=warm_up_epochs, base_lr=base_lr, smooth_label=smooth, find_lr=lr_find,
+            fitness_cnn.set_params(data=data, verbose=verbose, batch_size=batch_size, reduce_plateau=False,
+                           epochs=epochs, cosine_decay=False, early_stop=0,
+                           warm_epochs=0, base_lr=0.001, smooth_label=smooth, find_lr=False,
                            precise_epochs=precise_eps, include_time=include_time, test_eps=test_eps,  augment=augment)
 
             fitness_cnn.save(fitness_file)
@@ -197,30 +92,21 @@ for n in range(init, init + repetitions):
 
             fitness = FitnessCNNParallel()
             fitness.set_params(chrom_files_folder=fitness_folder, fitness_file=fitness_file, max_gpus=gpus,
-                           fp=32, main_line=command)
+                               fp=32, main_line='python3 ../train_gen.py')
             generational = TwoLevelGA(chromosome=c,
                                       fitness=fitness,
                                       generations=generations,
                                       population_first_level=population_first_level,
                                       population_second_level=population_second_level,
-                                      training_hours=training_hours,
-                                      save_progress=save_progress,
-                                      maximize_fitness=maximize_fitness,
-                                      statistical_validation=statistical_validation,
+                                      training_hours=100,
+                                      save_progress=True,
+                                      maximize_fitness=False,
+                                      statistical_validation=False,
                                       folder=folder,
-                                      start_level2=start_level2,
+                                      start_level2=frequency_second_level,
                                       frequency_second_level=frequency_second_level,
-                                      perform_evo=perform_evo)
-            base_folder = '../../experiments/cifar10_%s/freq_3/0'
-            exps = ['reg_smooth0', 'reg_smooth0_45k_DA']
-            exps_folder = [base_folder % exp for exp in exps]
-            init_indivs = []
-            for exp_folder in exps_folder:
-                init_indivs += get_n_best_from_exp(exp_folder, N=4)
-            generational.initialize_evolution()
-            generational.population_1[0:len(init_indivs)] = init_indivs
+                                      perform_evo=None)
 
-            generational.print_genetic(description)
             generational.print_genetic(params)
 
         ti_all = time()
@@ -231,56 +117,7 @@ for n in range(init, init + repetitions):
             print("Total elapsed time: %0.3f" % (time() - ti_all))
         else:
             winner, best_fit = generational.get_best()
-        print("\nFinal test")
-        print(winner)
-        fitness_cnn.verb = True
+
         
-        for eps in [precise_eps,  test_eps]:
-            if dataset == 'fashion_mnist':
-                continue
-            fitness_cnn.test_eps = eps
-            fitness_cnn.save(fitness_file)
-            generational.fitness_evaluator.set_params(chrom_files_folder=fitness_folder, fitness_file=fitness_file, max_gpus=gpus,
-                           fp=32, main_line=command)
-            score = generational.fitness_evaluator.calc(winner, test=True)
-            generational.print_genetic("\nTesting the winner with %d epochs" % eps)
-            generational.print_genetic("Test scroe: %0.4f" % score)
-        fitness_cnn.test_eps = test_eps
-        fitness_cnn.save(fitness_file) 
-        for stem in [32, 45]:
-            continue
-            for cells in [2]:
-                winner.hparams.stem = stem
-                #winner.hparams.n_cells = cells
-                score = generational.fitness_evaluator.calc(winner, test=True)
-                generational.print_genetic("\n\nCells: %d, Stem: %d" %(cells, stem))
-                generational.print_genetic("Score: %0.4f" % score)
-        for aug in ['cutout', False]:
-            continue
-            #winner.hparams.stem = 32
-            #winner.hparams.n_cells = 
-            fitness_cnn.augment = aug
-            fitness_cnn.save(fitness_file)
-            score = generational.fitness_evaluator.calc(winner, test=True)
-            generational.print_genetic("\n\nStem: %d, augment: %s, epochs: %d" %(winner.hparams.stem, aug, fitness_cnn.test_eps))
-            generational.print_genetic("Score: %0.4f" % score)
-        
-    
-        for aug in ['cutout', False, True]:
-            if dataset != 'cifar10':
-                continue
-            #winner.hparams.stem = 32
-            #winner.hparams.n_cells = 
-            fitness_cnn.augment = aug
-            fitness_cnn.save(fitness_file)
-            score = generational.fitness_evaluator.calc(winner, test=True)
-            generational.print_genetic("\n\nTesting with all data.\nStem: %d, augment: %s, epochs: %d" %(winner.hparams.stem, aug, fitness_cnn.test_eps))
-            generational.print_genetic("Score: %0.4f" % score)
 
 
-        fitness_cnn.augment = augment
-        fitness_cnn.verb = False
-        fitness_cnn.test_eps = test_eps
-        fitness_cnn.save(fitness_file)
-
-#Changue: experiments_folder, max_samples when loading and creating GA, final testing with all data, batch_size, description and repteitions ids.
